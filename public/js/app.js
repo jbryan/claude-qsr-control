@@ -1,5 +1,5 @@
 import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestPatchName } from './midi.js';
-import { getPresetName } from './presets.js';
+import { getPresetName, getAllPresets } from './presets.js';
 
 const deviceSelect = document.getElementById('device-select');
 const identifyBtn = document.getElementById('identify-btn');
@@ -16,6 +16,12 @@ const patchLabel = document.getElementById('patch-label');
 const patchDisplay = document.getElementById('patch-display');
 const patchPrev = document.getElementById('patch-prev');
 const patchNext = document.getElementById('patch-next');
+const searchBtn = document.getElementById('search-btn');
+const searchModal = document.getElementById('search-modal');
+const searchInput = document.getElementById('search-input');
+const searchResults = document.getElementById('search-results');
+const filterProg = document.getElementById('filter-prog');
+const filterMix = document.getElementById('filter-mix');
 
 const MIDI_CHANNEL = 0;
 
@@ -26,6 +32,9 @@ let currentBank = 0;
 let currentPatch = 0;
 let currentPatchName = '';
 let nameFetchId = 0;
+
+const allPresets = getAllPresets();
+let searchHighlight = -1;
 
 function setStatus(message, type = 'info') {
   lcdLine1.textContent = message;
@@ -103,6 +112,7 @@ function updateBankPatchUI() {
   bankSelect.disabled = !connected;
   patchPrev.disabled = !connected;
   patchNext.disabled = !connected;
+  searchBtn.disabled = !connected;
   patchLabel.textContent = currentMode === 'prog' ? 'Program' : 'Mix';
   bankSelect.value = currentBank;
   patchDisplay.textContent = String(currentPatch).padStart(3, '0');
@@ -277,4 +287,124 @@ advancedBtn.addEventListener('click', () => {
   advancedPanel.classList.toggle('hidden');
 });
 identifyBtn.addEventListener('click', handleIdentify);
+
+// --- Search ---
+
+function openSearch() {
+  searchModal.classList.remove('hidden');
+  searchInput.value = '';
+  searchHighlight = -1;
+  renderSearchResults('');
+  searchInput.focus();
+}
+
+function closeSearch() {
+  searchModal.classList.add('hidden');
+}
+
+function renderSearchResults(query) {
+  searchResults.innerHTML = '';
+  searchHighlight = -1;
+  const lower = query.toLowerCase();
+  const showProg = filterProg.checked;
+  const showMix = filterMix.checked;
+  const matches = allPresets.filter(p => {
+    if (p.mode === 'prog' && !showProg) return false;
+    if (p.mode === 'mix' && !showMix) return false;
+    if (lower && !p.name.toLowerCase().includes(lower)) return false;
+    return true;
+  });
+  const bankNames = ['', 'Preset 1', 'Preset 2', 'Preset 3', 'GenMIDI'];
+  let lastGroup = '';
+  for (const p of matches) {
+    const modeName = p.mode === 'prog' ? 'PROG' : 'MIX';
+    const bankName = bankNames[p.bank] || `Bank ${p.bank}`;
+    const group = `${modeName} — ${bankName}`;
+    if (group !== lastGroup) {
+      lastGroup = group;
+      const header = document.createElement('li');
+      header.className = 'search-group-header';
+      header.textContent = group;
+      searchResults.appendChild(header);
+    }
+    const patchNum = String(p.patch).padStart(3, '0');
+    const li = document.createElement('li');
+    li.className = 'search-result-item';
+    li.innerHTML =
+      `<span class="search-result-name">${escapeHTML(p.name)}</span>` +
+      `<span class="search-result-meta">#${patchNum}</span>`;
+    li.addEventListener('click', () => selectSearchResult(p));
+    searchResults.appendChild(li);
+  }
+}
+
+function escapeHTML(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function selectSearchResult(p) {
+  closeSearch();
+  if (!activeDevice) return;
+  if (p.mode !== currentMode) {
+    activateMode(p.mode);
+  }
+  if (p.bank !== currentBank) {
+    currentBank = p.bank;
+  }
+  currentPatch = p.patch;
+  updateBankPatchUI();
+  sendBankAndPatch();
+  fetchPatchName();
+}
+
+function updateSearchHighlight() {
+  const items = searchResults.querySelectorAll('.search-result-item');
+  items.forEach((el, i) => {
+    el.classList.toggle('active', i === searchHighlight);
+  });
+  if (searchHighlight >= 0 && items[searchHighlight]) {
+    items[searchHighlight].scrollIntoView({ block: 'nearest' });
+  }
+}
+
+searchBtn.addEventListener('click', openSearch);
+
+function refreshSearch() {
+  renderSearchResults(searchInput.value.trim());
+}
+
+searchInput.addEventListener('input', refreshSearch);
+filterProg.addEventListener('change', refreshSearch);
+filterMix.addEventListener('change', refreshSearch);
+
+searchInput.addEventListener('keydown', (e) => {
+  const items = searchResults.querySelectorAll('.search-result-item');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (items.length) {
+      searchHighlight = (searchHighlight + 1) % items.length;
+      updateSearchHighlight();
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (items.length) {
+      searchHighlight = searchHighlight <= 0 ? items.length - 1 : searchHighlight - 1;
+      updateSearchHighlight();
+    }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (searchHighlight >= 0 && items[searchHighlight]) {
+      items[searchHighlight].click();
+    }
+  } else if (e.key === 'Escape') {
+    closeSearch();
+  }
+});
+
+searchModal.addEventListener('click', (e) => {
+  if (e.target === searchModal) closeSearch();
+});
+
 init();

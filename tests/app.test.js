@@ -29,6 +29,17 @@ function setupDOM() {
     <div id="advanced-panel" class="hidden"></div>
     <select id="device-select"><option disabled selected>No devices</option></select>
     <button id="identify-btn" disabled>Identify Device</button>
+    <button id="search-btn" disabled>Search</button>
+    <div id="search-modal" class="search-modal hidden">
+      <div class="search-modal-content">
+        <input type="text" id="search-input" placeholder="Search patches..." autocomplete="off">
+        <div class="search-filters">
+          <label class="search-filter"><input type="checkbox" id="filter-prog" checked> Programs</label>
+          <label class="search-filter"><input type="checkbox" id="filter-mix" checked> Mixes</label>
+        </div>
+        <ul id="search-results"></ul>
+      </div>
+    </div>
   `;
 }
 

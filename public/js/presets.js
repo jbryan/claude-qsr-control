@@ -230,3 +230,23 @@ export function getPresetName(mode, bank, patch) {
   if (!bankArray || patch < 0 || patch >= bankArray.length) return '';
   return bankArray[patch];
 }
+
+/**
+ * Build a flat searchable list of all preset programs and mixes.
+ * Excludes Bank 0 (User) since names are only available via live SysEx.
+ * @returns {Array<{mode: string, bank: number, patch: number, name: string}>}
+ */
+export function getAllPresets() {
+  const results = [];
+  for (let b = 0; b < PRESET_PROGRAMS.length; b++) {
+    PRESET_PROGRAMS[b].forEach((name, p) => {
+      results.push({ mode: 'prog', bank: b + 1, patch: p, name });
+    });
+  }
+  for (let b = 0; b < PRESET_MIXES.length; b++) {
+    PRESET_MIXES[b].forEach((name, p) => {
+      results.push({ mode: 'mix', bank: b + 1, patch: p, name });
+    });
+  }
+  return results;
+}

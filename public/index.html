@@ -25,6 +25,9 @@
       <button id="mix-btn" class="mode-btn" disabled>MIX</button>
     </div>
     <div class="bank-patch-panel" id="bank-patch-panel">
+      <div class="search-row">
+        <button id="search-btn" disabled>Search</button>
+      </div>
       <div class="bank-row">
         <label for="bank-select" id="bank-label">Bank</label>
         <select id="bank-select" disabled>
@@ -55,6 +58,16 @@
           <option disabled selected>No devices</option>
         </select>
         <button id="identify-btn" disabled>Identify Device</button>
+      </div>
+    </div>
+    <div id="search-modal" class="search-modal hidden">
+      <div class="search-modal-content">
+        <input type="text" id="search-input" placeholder="Search patches..." autocomplete="off">
+        <div class="search-filters">
+          <label class="search-filter"><input type="checkbox" id="filter-prog" checked> Programs</label>
+          <label class="search-filter"><input type="checkbox" id="filter-mix" checked> Mixes</label>
+        </div>
+        <ul id="search-results"></ul>
       </div>
     </div>
   </main>

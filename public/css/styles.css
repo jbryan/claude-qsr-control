@@ -319,3 +319,124 @@ button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* --- Search button --- */
+
+.search-row {
+  display: flex;
+}
+
+#search-btn {
+  width: 100%;
+}
+
+/* --- Search modal --- */
+
+.search-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 10vh;
+  z-index: 100;
+}
+
+.search-modal-content {
+  width: 100%;
+  max-width: 480px;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 4px;
+  padding: 1rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+#search-input {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 3px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--text);
+  outline: none;
+}
+
+#search-input:focus {
+  border-color: var(--accent);
+}
+
+.search-filters {
+  display: flex;
+  gap: 1rem;
+  padding: 0.25rem 0;
+}
+
+.search-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+.search-filter input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+#search-results {
+  list-style: none;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.search-group-header {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0.6rem 0.75rem 0.25rem;
+  border-bottom: 1px solid var(--panel-groove);
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+
+.search-result-item {
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  border-radius: 3px;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.search-result-item:hover,
+.search-result-item.active {
+  background: var(--btn-active);
+  outline: 1px solid var(--accent);
+}
+
+.search-result-name {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.search-result-meta {
+  font-size: 0.7rem;
+  color: var(--label);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
