@@ -1,0 +1,17 @@
+{
+  "name": "qsrcontrol",
+  "version": "1.0.0",
+  "description": "QSR Control PWA - MIDI controller for Alesis QS series synthesizers",
+  "type": "module",
+  "scripts": {
+    "start": "npx serve public",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  }
+}
