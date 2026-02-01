@@ -1,4 +1,4 @@
-import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, requestPatchName } from './midi.js';
+import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestPatchName } from './midi.js';
 import { getPresetName } from './presets.js';
 
 const deviceSelect = document.getElementById('device-select');
@@ -138,8 +138,8 @@ function activateMode(mode) {
   // In Program mode: "On" (1) makes PC select programs.
   // In Mix mode: "Channel 1" (2) makes PC on ch1 select mixes.
   const progSelect = mode === 'prog' ? 1 : 2;
-  sendMidiProgramSelect(out, progSelect);
   sendModeSelect(out, modeValue);
+  sendMidiProgramSelect(out, progSelect);
   currentMode = mode;
   currentPatch = 0;
   updateModeButtons();
@@ -192,8 +192,11 @@ async function autoScan() {
     if (matchIndex !== -1) {
       deviceSelect.value = matchIndex;
     }
-    sendMidiProgramSelect(activeDevice.device.output, 1); // On
+    // Disable General MIDI (func=0, page=0, pot=1, value=0) so that
+    // CC#0 bank select works and mode switching behaves correctly.
+    sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0);
     sendModeSelect(activeDevice.device.output, 0);
+    sendMidiProgramSelect(activeDevice.device.output, 1); // On
     currentMode = 'prog';
     currentBank = 0;
     currentPatch = 0;
@@ -224,8 +227,9 @@ async function handleIdentify() {
   try {
     const identity = await queryDeviceIdentity(device.output, device.input);
     activeDevice = { device, identity };
-    sendMidiProgramSelect(activeDevice.device.output, 1); // On
+    sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0); // GM off
     sendModeSelect(activeDevice.device.output, 0);
+    sendMidiProgramSelect(activeDevice.device.output, 1); // On
     currentMode = 'prog';
     currentBank = 0;
     currentPatch = 0;

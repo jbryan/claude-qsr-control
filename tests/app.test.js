@@ -131,22 +131,22 @@ describe('initialization', () => {
     navigator.requestMIDIAccess = orig;
   });
 
-  test('sends MIDI Program Select = On and Mode Select = Program on init', async () => {
+  test('sends Mode Select and MIDI Program Select = On on init', async () => {
     await loadApp();
     const calls = qsrOutput.send.mock.calls;
-    // Find the sendMidiProgramSelect call (opcode 0x10, func=0, page=5, value=1)
-    const progSelectCall = calls.find(c => {
-      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
-      return d[0] === 0xF0 && d[5] === 0x10 && d[7] === 0x05 && d[9] === 0x01;
-    });
-    expect(progSelectCall).toBeTruthy();
-
     // Find mode select call (opcode 0x0D, mode=0)
     const modeCall = calls.find(c => {
       const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
       return d[0] === 0xF0 && d[5] === 0x0D && d[6] === 0x00;
     });
     expect(modeCall).toBeTruthy();
+
+    // Find the sendMidiProgramSelect call (opcode 0x10, func=0, page=5, value=1 = On)
+    const progSelectCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      return d[0] === 0xF0 && d[5] === 0x10 && d[7] === 0x05 && d[9] === 0x01;
+    });
+    expect(progSelectCall).toBeTruthy();
   });
 });
 
