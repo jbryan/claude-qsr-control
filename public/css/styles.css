@@ -223,6 +223,7 @@ body {
     0 0 8px var(--lcd-glow);
   word-break: break-word;
   text-shadow: 0 0 6px var(--lcd-glow);
+  position: relative;
 }
 
 .lcd-line1 {
@@ -281,6 +282,117 @@ body {
 .lcd.success {
   background: var(--lcd-bg);
   color: var(--lcd-text);
+}
+
+/* --- Program info button --- */
+
+.prog-info-btn {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.45rem;
+  padding: 0.15rem;
+  color: var(--lcd-text);
+  opacity: 0.6;
+}
+
+.prog-info-btn:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--lcd-text);
+  border-color: var(--lcd-text);
+}
+
+/* --- Program info modal --- */
+
+.prog-info-content {
+  max-width: 560px;
+}
+
+.prog-info-content .globals-body {
+  max-height: 70vh;
+}
+
+/* Tab bar */
+.prog-info-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--panel-edge);
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.prog-info-tab {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  background: none;
+  color: var(--label);
+  cursor: pointer;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+
+.prog-info-tab:hover {
+  color: var(--text);
+  background: var(--btn-bg);
+}
+
+.prog-info-tab.active {
+  color: var(--accent);
+  border-color: var(--panel-edge);
+  background: var(--panel);
+}
+
+.prog-info-tab:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.prog-info-tab:disabled:hover {
+  background: none;
+  color: var(--label);
+}
+
+/* Tab panels */
+.prog-info-panel {
+  display: none;
+}
+
+.prog-info-panel.active {
+  display: block;
+}
+
+/* Section flow: each subsection is a block that can reflow into columns */
+.prog-info-sections {
+  display: flex;
+  flex-direction: column;
+}
+
+.prog-info-section-block {
+  break-inside: avoid;
+}
+
+.prog-info-section-header td {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-top: 0.6rem;
+  border-bottom: 1px solid var(--panel-edge);
+}
+
+.prog-info-subsection td {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--label);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 0.4rem;
 }
 
 /* --- Mode buttons --- */
@@ -562,4 +674,74 @@ button:disabled {
   color: var(--label);
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+/* --- Responsive: wider viewports --- */
+
+@media (min-width: 640px) {
+  .rack-panel {
+    max-width: 700px;
+  }
+
+  /* Combine mode + bank + patch into a horizontal strip */
+  .mode-row {
+    margin-bottom: 0.6rem;
+  }
+
+  .bank-patch-panel {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+  }
+
+  .search-row {
+    grid-column: 1 / -1;
+  }
+
+  .search-modal-content {
+    max-width: 560px;
+  }
+
+  .prog-info-content {
+    max-width: 640px;
+  }
+
+  .prog-info-sections {
+    columns: 2;
+    column-gap: 1.25rem;
+  }
+
+  .prog-info-section-block {
+    break-inside: avoid;
+  }
+}
+
+@media (min-width: 900px) {
+  .rack-panel {
+    max-width: 840px;
+  }
+
+  .bank-patch-panel {
+    grid-template-columns: auto 1fr 1fr;
+  }
+
+  .search-row {
+    grid-column: auto;
+  }
+
+  #search-btn {
+    height: 100%;
+  }
+
+  .search-modal-content {
+    max-width: 640px;
+  }
+
+  .prog-info-content {
+    max-width: 800px;
+  }
+
+  .prog-info-content .globals-body {
+    max-height: 75vh;
+  }
 }

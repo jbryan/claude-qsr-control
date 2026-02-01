@@ -29,6 +29,16 @@ function setupDOM() {
     <div id="advanced-panel" class="hidden"></div>
     <select id="device-select"><option disabled selected>No devices</option></select>
     <button id="identify-btn" disabled>Identify Device</button>
+    <button id="prog-info-btn" class="icon-btn prog-info-btn hidden" title="Program Info">i</button>
+    <div id="prog-info-modal" class="search-modal hidden">
+      <div class="search-modal-content prog-info-content">
+        <div class="globals-modal-header">
+          <span class="globals-title">Program Parameters</span>
+          <button id="prog-info-close" class="icon-btn">&times;</button>
+        </div>
+        <div id="prog-info-body" class="globals-body"></div>
+      </div>
+    </div>
     <button id="globals-btn" class="icon-btn" disabled>G</button>
     <div id="globals-modal" class="search-modal hidden">
       <div class="search-modal-content">
