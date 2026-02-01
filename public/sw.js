@@ -1,11 +1,15 @@
-const CACHE_NAME = 'qsr-control-v1';
+const CACHE_NAME = 'qsr-control-v2';
 const ASSETS = [
   '/',
   '/index.html',
   '/css/styles.css',
   '/js/app.js',
   '/js/midi.js',
+  '/js/midi-log.js',
   '/manifest.json',
+  '/favicon.ico',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
