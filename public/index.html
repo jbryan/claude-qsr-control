@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QSR Control</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#1c1c1c">
+</head>
+<body>
+  <main class="rack-panel">
+    <div class="panel-header">
+      <span class="brand">ALESIS</span>
+      <span class="model">QSR Control</span>
+    </div>
+    <div class="lcd" id="status" aria-live="polite">
+      <div class="lcd-line1" id="lcd-line1">Ready</div>
+      <div class="lcd-line2" id="lcd-line2"></div>
+    </div>
+    <div class="mode-row" id="mode-row">
+      <button id="prog-btn" class="mode-btn active" disabled>PROG</button>
+      <button id="mix-btn" class="mode-btn" disabled>MIX</button>
+    </div>
+    <div class="bank-patch-panel" id="bank-patch-panel">
+      <div class="bank-row">
+        <label for="bank-select" id="bank-label">Bank</label>
+        <select id="bank-select" disabled>
+          <option value="0">User</option>
+          <option value="1">Preset 1</option>
+          <option value="2">Preset 2</option>
+          <option value="3">Preset 3</option>
+          <option value="4">GenMIDI</option>
+        </select>
+      </div>
+      <div class="patch-row">
+        <label id="patch-label">Program</label>
+        <div class="patch-nav">
+          <button id="patch-prev" disabled>&lsaquo;</button>
+          <span class="patch-display" id="patch-display">000</span>
+          <button id="patch-next" disabled>&rsaquo;</button>
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="button-row">
+        <button id="rescan-btn">Rescan</button>
+        <button id="advanced-btn">Advanced</button>
+      </div>
+      <div id="advanced-panel" class="advanced-panel hidden">
+        <label for="device-select">MIDI Device</label>
+        <select id="device-select">
+          <option disabled selected>No devices</option>
+        </select>
+        <button id="identify-btn" disabled>Identify Device</button>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
