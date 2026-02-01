@@ -462,6 +462,7 @@ export function packQSData(unpacked) {
 
 // Unpack QS 7-bit MIDI encoding: every 8 MIDI bytes → 7 QS data bytes
 // See qs678syx.htm opcode 00 for the bit layout.
+// Handles partial trailing groups (e.g. global data: 23 packed → 20 unpacked).
 export function unpackQSData(packed) {
   const unpacked = [];
   for (let i = 0; i + 7 < packed.length; i += 8) {
@@ -472,6 +473,17 @@ export function unpackQSData(packed) {
     unpacked.push(((packed[i+4] >> 4)  & 0x07) | ((packed[i+5] & 0x1F) << 3));
     unpacked.push(((packed[i+5] >> 5)  & 0x03) | ((packed[i+6] & 0x3F) << 2));
     unpacked.push(((packed[i+6] >> 6)  & 0x01) | ((packed[i+7] & 0x7F) << 1));
+  }
+  // Partial trailing group: N remaining packed bytes yield N-1 unpacked bytes.
+  const tail = packed.length % 8;
+  if (tail >= 2) {
+    const i = packed.length - tail;
+    if (tail >= 2) unpacked.push( (packed[i]          & 0x7F) | ((packed[i+1] & 0x01) << 7));
+    if (tail >= 3) unpacked.push(((packed[i+1] >> 1)  & 0x3F) | ((packed[i+2] & 0x03) << 6));
+    if (tail >= 4) unpacked.push(((packed[i+2] >> 2)  & 0x1F) | ((packed[i+3] & 0x07) << 5));
+    if (tail >= 5) unpacked.push(((packed[i+3] >> 3)  & 0x0F) | ((packed[i+4] & 0x0F) << 4));
+    if (tail >= 6) unpacked.push(((packed[i+4] >> 4)  & 0x07) | ((packed[i+5] & 0x1F) << 3));
+    if (tail >= 7) unpacked.push(((packed[i+5] >> 5)  & 0x03) | ((packed[i+6] & 0x3F) << 2));
   }
   return unpacked;
 }

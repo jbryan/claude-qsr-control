@@ -29,6 +29,16 @@ function setupDOM() {
     <div id="advanced-panel" class="hidden"></div>
     <select id="device-select"><option disabled selected>No devices</option></select>
     <button id="identify-btn" disabled>Identify Device</button>
+    <button id="globals-btn" class="icon-btn" disabled>G</button>
+    <div id="globals-modal" class="search-modal hidden">
+      <div class="search-modal-content">
+        <div class="globals-modal-header">
+          <span class="globals-title">Global Settings</span>
+          <button id="globals-close" class="icon-btn">&times;</button>
+        </div>
+        <div id="globals-body" class="globals-body"></div>
+      </div>
+    </div>
     <button id="search-btn" disabled>Search</button>
     <div id="search-modal" class="search-modal hidden">
       <div class="search-modal-content">
@@ -62,6 +72,7 @@ function autoReplyIdentity(output, input) {
 beforeEach(async () => {
   jest.resetModules();
   jest.useFakeTimers();
+  localStorage.clear();
   setupDOM();
   mockAccess = new MockMIDIAccess();
   const dev = mockAccess.addDevice('Alesis QSR');

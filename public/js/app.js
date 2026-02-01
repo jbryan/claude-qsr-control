@@ -1,4 +1,4 @@
-import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestPatchName } from './midi.js';
+import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestPatchName, requestGlobalData, unpackQSData } from './midi.js';
 import { getPresetName, getAllPresets } from './presets.js';
 
 const deviceSelect = document.getElementById('device-select');
@@ -22,6 +22,10 @@ const searchInput = document.getElementById('search-input');
 const searchResults = document.getElementById('search-results');
 const filterProg = document.getElementById('filter-prog');
 const filterMix = document.getElementById('filter-mix');
+const globalsBtn = document.getElementById('globals-btn');
+const globalsModal = document.getElementById('globals-modal');
+const globalsBody = document.getElementById('globals-body');
+const globalsClose = document.getElementById('globals-close');
 
 const MIDI_CHANNEL = 0;
 
@@ -35,6 +39,35 @@ let nameFetchId = 0;
 
 const allPresets = getAllPresets();
 let searchHighlight = -1;
+
+const STORAGE_KEY = 'qsr-control-state';
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      mode: currentMode,
+      bank: currentBank,
+      patch: currentPatch,
+    }));
+  } catch {
+    // localStorage unavailable — ignore
+  }
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if ((s.mode === 'prog' || s.mode === 'mix') &&
+        typeof s.bank === 'number' && typeof s.patch === 'number') {
+      return s;
+    }
+  } catch {
+    // Corrupt or unavailable — ignore
+  }
+  return null;
+}
 
 function setStatus(message, type = 'info') {
   lcdLine1.textContent = message;
@@ -113,6 +146,7 @@ function updateBankPatchUI() {
   patchPrev.disabled = !connected;
   patchNext.disabled = !connected;
   searchBtn.disabled = !connected;
+  globalsBtn.disabled = !connected;
   patchLabel.textContent = currentMode === 'prog' ? 'Program' : 'Mix';
   bankSelect.value = currentBank;
   patchDisplay.textContent = String(currentPatch).padStart(3, '0');
@@ -130,6 +164,7 @@ function selectBank(bank) {
   updateBankPatchUI();
   sendBankAndPatch();
   fetchPatchName();
+  saveState();
 }
 
 function selectPatch(patch) {
@@ -140,6 +175,7 @@ function selectPatch(patch) {
   updateBankPatchUI();
   sendBankAndPatch();
   fetchPatchName();
+  saveState();
 }
 
 function activateMode(mode) {
@@ -152,6 +188,24 @@ function activateMode(mode) {
   sendMidiProgramSelect(out, progSelect);
   currentMode = mode;
   currentPatch = 0;
+  updateModeButtons();
+  updateBankPatchUI();
+  sendBankAndPatch();
+  fetchPatchName();
+  saveState();
+}
+
+function restoreOrDefaultState() {
+  const saved = loadState();
+  const mode = saved ? saved.mode : 'prog';
+  const modeValue = mode === 'prog' ? 0 : 1;
+  const progSelect = mode === 'prog' ? 1 : 2;
+  const out = activeDevice.device.output;
+  sendModeSelect(out, modeValue);
+  sendMidiProgramSelect(out, progSelect);
+  currentMode = mode;
+  currentBank = saved ? saved.bank : 0;
+  currentPatch = saved ? saved.patch : 0;
   updateModeButtons();
   updateBankPatchUI();
   sendBankAndPatch();
@@ -205,14 +259,7 @@ async function autoScan() {
     // Disable General MIDI (func=0, page=0, pot=1, value=0) so that
     // CC#0 bank select works and mode switching behaves correctly.
     sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0);
-    sendModeSelect(activeDevice.device.output, 0);
-    sendMidiProgramSelect(activeDevice.device.output, 1); // On
-    currentMode = 'prog';
-    currentBank = 0;
-    currentPatch = 0;
-    updateModeButtons();
-    updateBankPatchUI();
-    fetchPatchName();
+    restoreOrDefaultState();
   } else {
     activeDevice = null;
     updateModeButtons();
@@ -238,14 +285,7 @@ async function handleIdentify() {
     const identity = await queryDeviceIdentity(device.output, device.input);
     activeDevice = { device, identity };
     sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0); // GM off
-    sendModeSelect(activeDevice.device.output, 0);
-    sendMidiProgramSelect(activeDevice.device.output, 1); // On
-    currentMode = 'prog';
-    currentBank = 0;
-    currentPatch = 0;
-    updateModeButtons();
-    updateBankPatchUI();
-    fetchPatchName();
+    restoreOrDefaultState();
   } catch (err) {
     setStatus(err.message, 'error');
   } finally {
@@ -357,6 +397,7 @@ function selectSearchResult(p) {
   updateBankPatchUI();
   sendBankAndPatch();
   fetchPatchName();
+  saveState();
 }
 
 function updateSearchHighlight() {
@@ -405,6 +446,130 @@ searchInput.addEventListener('keydown', (e) => {
 
 searchModal.addEventListener('click', (e) => {
   if (e.target === searchModal) closeSearch();
+});
+
+// --- Globals dialog ---
+
+// Byte indices match the QSR Global Data Format (qs678syx.htm).
+// Bytes 0 and 14 are spares and are omitted.
+const GLOBAL_PARAMS = [
+  { byte: 1,  name: 'Pitch Transpose', signed: true, format: v => `${v > 0 ? '+' : ''}${v}`, edit: { min: -12, max: 12, func: 0, page: 0, pot: 2 } },
+  { byte: 2,  name: 'Pitch Fine Tune', signed: true, format: v => `${v > 0 ? '+' : ''}${v}`, edit: { min: -99, max: 99, func: 0, page: 0, pot: 3 } },
+  { byte: 3,  name: 'Keyboard Scaling', format: v => String(v) },
+  { byte: 4,  name: 'Keyboard Curve', format: v => ['Linear', 'Piano 1', 'Piano 2'][v] || String(v) },
+  { byte: 5,  name: 'Keyboard Transpose', signed: true, format: v => `${v > 0 ? '+' : ''}${v}` },
+  { byte: 6,  name: 'Keyboard Mode', format: v => {
+    const modes = ['Normal', 'Split R', 'Split L', 'Split RL',
+      'Layer', 'Layer R', 'Layer L', 'Layer RL',
+      'W-Split R', 'W-Split L', 'W-Split RL',
+      'W-Layer', 'W-Layer R', 'W-Layer L', 'W-Layer RL',
+      '3-Split R', '3-Split L', '3-Split RL'];
+    return modes[v] || String(v);
+  }},
+  { byte: 7,  name: 'Controller A', format: v => `CC ${v}`, edit: { min: 0, max: 120, func: 0, page: 2, pot: 0 } },
+  { byte: 8,  name: 'Controller B', format: v => `CC ${v}`, edit: { min: 0, max: 120, func: 0, page: 2, pot: 1 } },
+  { byte: 9,  name: 'Controller C', format: v => `CC ${v}`, edit: { min: 0, max: 120, func: 0, page: 2, pot: 2 } },
+  { byte: 10, name: 'Controller D', format: v => `CC ${v}`, edit: { min: 0, max: 120, func: 0, page: 2, pot: 3 } },
+  { byte: 11, name: 'Pedal 1 Controller', format: v => `CC ${v}`, edit: { min: 0, max: 120, func: 0, page: 4, pot: 0 } },
+  { byte: 12, name: 'Pedal 2 Controller', format: v => `CC ${v}`, edit: { min: 0, max: 120, func: 0, page: 4, pot: 2 } },
+  { byte: 13, name: 'MIDI Program Select', format: v => {
+    if (v === 0) return 'Off';
+    if (v === 1) return 'On';
+    return `Channel ${v - 1}`;
+  }, edit: { type: 'select', func: 0, page: 5, pot: 0,
+    options: [{ value: 0, label: 'Off' }, { value: 1, label: 'On' },
+      ...Array.from({ length: 16 }, (_, i) => ({ value: i + 2, label: `Channel ${i + 1}` }))] }},
+  { byte: 15, name: 'Clock', format: v => ['Int 48kHz', 'Int 44.1kHz', 'Ext 48kHz', 'Ext 44.1kHz'][v] || String(v) },
+  { byte: 16, name: 'Mix Group Channel', format: v => v === 0 ? 'Off' : String(v),
+    edit: { type: 'select', func: 0, page: 6, pot: 0,
+      options: [{ value: 0, label: 'Off' },
+        ...Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: String(i + 1) }))] }},
+  { byte: 17, name: 'General MIDI', format: v => v ? 'On' : 'Off',
+    edit: { type: 'checkbox', func: 0, page: 0, pot: 1 } },
+  { byte: 18, name: 'A-D Controller Reset', format: v => v ? 'On' : 'Off' },
+  { byte: 19, name: 'A-D Controller Mode', format: v => ['Preset', 'User 1', 'User 2'][v] || String(v) },
+];
+
+function parseSignedByte(b) {
+  return b > 127 ? b - 256 : b;
+}
+
+function renderGlobalParams(unpacked) {
+  let html = '<table class="globals-table"><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>';
+  for (const def of GLOBAL_PARAMS) {
+    const raw = unpacked[def.byte];
+    const val = def.signed ? parseSignedByte(raw) : raw;
+    let valueCell;
+    if (!def.edit) {
+      valueCell = def.format(val);
+    } else if (def.edit.type === 'select') {
+      const opts = def.edit.options.map(o =>
+        `<option value="${o.value}"${o.value === val ? ' selected' : ''}>${o.label}</option>`
+      ).join('');
+      valueCell = `<select class="global-edit" data-byte="${def.byte}">${opts}</select>`;
+    } else if (def.edit.type === 'checkbox') {
+      valueCell = `<input type="checkbox" class="global-edit" data-byte="${def.byte}"${val ? ' checked' : ''}>`;
+    } else {
+      const { min, max } = def.edit;
+      valueCell = `<input type="number" class="global-edit" data-byte="${def.byte}" min="${min}" max="${max}" value="${val}">`;
+    }
+    html += `<tr><td>${def.name}</td><td>${valueCell}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  globalsBody.innerHTML = html;
+
+  globalsBody.querySelectorAll('.global-edit').forEach(el => {
+    el.addEventListener('change', () => {
+      if (!activeDevice) return;
+      const byteIdx = Number(el.dataset.byte);
+      const def = GLOBAL_PARAMS.find(d => d.byte === byteIdx);
+      if (!def || !def.edit) return;
+      let val;
+      if (def.edit.type === 'checkbox') {
+        val = el.checked ? 1 : 0;
+      } else if (def.edit.type === 'select') {
+        val = Number(el.value);
+      } else {
+        val = Number(el.value);
+        val = Math.max(def.edit.min, Math.min(def.edit.max, val));
+        el.value = val;
+      }
+      const midiVal = val < 0 ? val + 256 : val;
+      sendGlobalParam(activeDevice.device.output, def.edit.func, def.edit.page, def.edit.pot, midiVal);
+    });
+  });
+}
+
+async function openGlobals() {
+  globalsModal.classList.remove('hidden');
+  globalsBody.innerHTML = '<p class="globals-loading">Requesting global data...</p>';
+  if (!activeDevice) return;
+  try {
+    const response = await requestGlobalData(
+      activeDevice.device.output,
+      activeDevice.device.input,
+    );
+    const packed = response.slice(7, response.length - 1);
+    const unpacked = unpackQSData(packed);
+    renderGlobalParams(unpacked);
+  } catch {
+    globalsBody.innerHTML = '<p class="globals-loading">Failed to read global data.</p>';
+  }
+}
+
+function closeGlobals() {
+  globalsModal.classList.add('hidden');
+}
+
+globalsBtn.addEventListener('click', openGlobals);
+globalsClose.addEventListener('click', closeGlobals);
+globalsModal.addEventListener('click', (e) => {
+  if (e.target === globalsModal) closeGlobals();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !globalsModal.classList.contains('hidden')) {
+    closeGlobals();
+  }
 });
 
 init();
