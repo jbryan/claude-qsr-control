@@ -77,22 +77,31 @@ describe('sendModeSelect', () => {
 // --- sendBankSelect ---
 
 describe('sendBankSelect', () => {
-  test('sends CC#0 on correct channel', () => {
+  test('sends CC#0 MSB and CC#32 LSB on correct channel', () => {
     const output = new MockMIDIOutput();
     midi.sendBankSelect(output, 0, 2);
-    expect(output.send).toHaveBeenCalledWith([0xB0, 0x00, 0x02]);
+    expect(output.send).toHaveBeenCalledTimes(2);
+    expect(output.send.mock.calls[0][0]).toEqual([0xB0, 0x00, 0x02]);
+    expect(output.send.mock.calls[1][0]).toEqual([0xB0, 0x20, 0x20]);
   });
 
   test('masks channel to 4 bits', () => {
     const output = new MockMIDIOutput();
     midi.sendBankSelect(output, 15, 0);
     expect(output.send.mock.calls[0][0][0]).toBe(0xBF);
+    expect(output.send.mock.calls[1][0][0]).toBe(0xBF);
   });
 
   test('masks bank to 7 bits', () => {
     const output = new MockMIDIOutput();
     midi.sendBankSelect(output, 0, 0xFF);
     expect(output.send.mock.calls[0][0][2]).toBe(0x7F);
+  });
+
+  test('always sends LSB=32 regardless of bank', () => {
+    const output = new MockMIDIOutput();
+    midi.sendBankSelect(output, 0, 0);
+    expect(output.send.mock.calls[1][0]).toEqual([0xB0, 0x20, 0x20]);
   });
 });
 

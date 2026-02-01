@@ -219,7 +219,7 @@ describe('mode switching', () => {
 // --- Bank Selection ---
 
 describe('bank selection', () => {
-  test('changing bank sends bank select + program change', async () => {
+  test('changing bank sends bank select MSB + LSB + program change', async () => {
     await loadApp();
     qsrOutput.send.mockClear();
 
@@ -229,12 +229,19 @@ describe('bank selection', () => {
     await jest.advanceTimersByTimeAsync(100);
 
     const calls = qsrOutput.send.mock.calls;
-    // Bank select CC#0 = 2
-    const bankCall = calls.find(c => {
+    // Bank select CC#0 MSB = 2
+    const msbCall = calls.find(c => {
       const d = Array.isArray(c[0]) ? c[0] : Array.from(c[0]);
       return (d[0] & 0xF0) === 0xB0 && d[1] === 0x00 && d[2] === 2;
     });
-    expect(bankCall).toBeTruthy();
+    expect(msbCall).toBeTruthy();
+
+    // Bank select CC#32 LSB = 32
+    const lsbCall = calls.find(c => {
+      const d = Array.isArray(c[0]) ? c[0] : Array.from(c[0]);
+      return (d[0] & 0xF0) === 0xB0 && d[1] === 0x20 && d[2] === 0x20;
+    });
+    expect(lsbCall).toBeTruthy();
 
     // Program change to 0
     const pcCall = calls.find(c => {
@@ -443,6 +450,72 @@ describe('LCD display', () => {
     await jest.advanceTimersByTimeAsync(3000);
     const lcd2 = document.getElementById('lcd-line2');
     expect(lcd2.innerHTML).toContain('001');
+  });
+});
+
+// --- Preset names for non-User banks ---
+
+describe('preset name lookup', () => {
+  test('shows preset name when switching to bank 1 in prog mode', async () => {
+    await loadApp();
+
+    const bankSel = document.getElementById('bank-select');
+    bankSel.value = '1';
+    bankSel.dispatchEvent(new Event('change'));
+    await jest.advanceTimersByTimeAsync(100);
+
+    const lcd2 = document.getElementById('lcd-line2');
+    expect(lcd2.innerHTML).toContain('TrueStereo');
+  });
+
+  test('shows preset name when switching to bank 4 (GM) in prog mode', async () => {
+    await loadApp();
+
+    const bankSel = document.getElementById('bank-select');
+    bankSel.value = '4';
+    bankSel.dispatchEvent(new Event('change'));
+    await jest.advanceTimersByTimeAsync(100);
+
+    const lcd2 = document.getElementById('lcd-line2');
+    expect(lcd2.innerHTML).toContain('AcGrandPno');
+  });
+
+  test('shows preset mix name when in mix mode bank 1', async () => {
+    await loadApp();
+    document.getElementById('mix-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    const bankSel = document.getElementById('bank-select');
+    bankSel.value = '1';
+    bankSel.dispatchEvent(new Event('change'));
+    await jest.advanceTimersByTimeAsync(100);
+
+    const lcd2 = document.getElementById('lcd-line2');
+    expect(lcd2.innerHTML).toContain('Zen Piano');
+  });
+
+  test('navigating patches updates preset name', async () => {
+    await loadApp();
+
+    const bankSel = document.getElementById('bank-select');
+    bankSel.value = '1';
+    bankSel.dispatchEvent(new Event('change'));
+    await jest.advanceTimersByTimeAsync(100);
+
+    document.getElementById('patch-next').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    const lcd2 = document.getElementById('lcd-line2');
+    expect(lcd2.innerHTML).toContain('Titanium88');
+  });
+
+  test('does not show preset name for User bank (0)', async () => {
+    await loadApp();
+    // Default is bank 0 (User) — name should be empty (fetched via SysEx which times out)
+    await jest.advanceTimersByTimeAsync(3000);
+    const lcd2 = document.getElementById('lcd-line2');
+    // The name column should not contain any preset bank 1 name
+    expect(lcd2.innerHTML).not.toContain('TrueStereo');
   });
 });
 

@@ -103,6 +103,11 @@ describe('logSend', () => {
     expect(lastLog()).toContain('Bank Select MSB -> #16 (bank 16) on channel 1');
   });
 
+  test('Bank Select LSB', () => {
+    logSend([0xB0, 0x20, 0x20]);
+    expect(lastLog()).toContain('Bank Select LSB -> 32 on channel 1');
+  });
+
   test('Generic CC message', () => {
     logSend([0xB1, 0x07, 0x64]);
     expect(lastLog()).toContain('Control Change CC#7 = 100 on channel 2');

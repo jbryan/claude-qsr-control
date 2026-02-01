@@ -1,4 +1,5 @@
 import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, requestPatchName } from './midi.js';
+import { getPresetName } from './presets.js';
 
 const deviceSelect = document.getElementById('device-select');
 const identifyBtn = document.getElementById('identify-btn');
@@ -52,6 +53,16 @@ async function fetchPatchName() {
   currentPatchName = '';
   updateLCD();
   if (!activeDevice) return;
+
+  // Non-User banks have static preset names — no SysEx needed.
+  const preset = getPresetName(currentMode, currentBank, currentPatch);
+  if (preset) {
+    if (id !== nameFetchId) return;
+    currentPatchName = preset;
+    updateLCD();
+    return;
+  }
+
   try {
     const name = await requestPatchName(
       activeDevice.device.output,
@@ -64,7 +75,7 @@ async function fetchPatchName() {
     currentPatchName = name;
     updateLCD();
   } catch {
-    // Timeout or non-User bank — leave name blank
+    // Timeout or unknown bank — leave name blank
   }
 }
 

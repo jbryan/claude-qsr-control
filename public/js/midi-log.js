@@ -121,6 +121,9 @@ function describeSend(bytes) {
       const bankName = BANK_NAMES[val] || `#${val}`;
       return `Bank Select MSB -> ${bankName} (bank ${val}) on channel ${ch}`;
     }
+    if (cc === 0x20) {
+      return `Bank Select LSB -> ${val} on channel ${ch}`;
+    }
     return `Control Change CC#${cc} = ${val} on channel ${ch}`;
   }
 

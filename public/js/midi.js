@@ -101,10 +101,14 @@ export function sendModeSelect(output, mode) {
 }
 
 export function sendBankSelect(output, channel, bank) {
-  // CC#0 (Bank Select MSB)
-  const msg = [0xB0 | (channel & 0x0F), 0x00, bank & 0x7F];
-  logSend(msg);
-  output.send(msg);
+  // CC#0 (Bank Select MSB) — selects User(0), Preset 1–3(1–3), GenMIDI(4)
+  const msb = [0xB0 | (channel & 0x0F), 0x00, bank & 0x7F];
+  logSend(msb);
+  output.send(msb);
+  // CC#32 (Bank Select LSB) — QSR requires LSB=32 for all banks
+  const lsb = [0xB0 | (channel & 0x0F), 0x20, 0x20];
+  logSend(lsb);
+  output.send(lsb);
 }
 
 export function sendProgramChange(output, channel, program) {
