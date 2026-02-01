@@ -621,6 +621,478 @@ describe('stale fetch guard', () => {
   });
 });
 
+// --- localStorage persistence ---
+
+describe('localStorage persistence', () => {
+  test('restores saved mode/bank/patch on reconnect', async () => {
+    localStorage.setItem('qsr-control-state', JSON.stringify({
+      mode: 'mix', bank: 2, patch: 42,
+    }));
+    await loadApp();
+
+    expect(document.getElementById('mix-btn').classList.contains('active')).toBe(true);
+    expect(document.getElementById('bank-select').value).toBe('2');
+    expect(document.getElementById('patch-display').textContent).toBe('042');
+    expect(document.getElementById('patch-label').textContent).toBe('Mix');
+  });
+
+  test('sends correct MIDI messages for restored mix mode state', async () => {
+    localStorage.setItem('qsr-control-state', JSON.stringify({
+      mode: 'mix', bank: 1, patch: 5,
+    }));
+    await loadApp();
+
+    const calls = qsrOutput.send.mock.calls;
+    // Mode select for mix (opcode 0x0D, value 1)
+    const modeCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      return d[0] === 0xF0 && d[5] === 0x0D && d[6] === 0x01;
+    });
+    expect(modeCall).toBeTruthy();
+
+    // MIDI Program Select = Channel 1 (value 2)
+    const progSelCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      return d[0] === 0xF0 && d[5] === 0x10 && d[7] === 0x05 && d[9] === 0x02;
+    });
+    expect(progSelCall).toBeTruthy();
+  });
+
+  test('defaults to prog/0/0 with no saved state', async () => {
+    await loadApp();
+    expect(document.getElementById('prog-btn').classList.contains('active')).toBe(true);
+    expect(document.getElementById('bank-select').value).toBe('0');
+    expect(document.getElementById('patch-display').textContent).toBe('000');
+  });
+
+  test('ignores corrupt localStorage data', async () => {
+    localStorage.setItem('qsr-control-state', '{bad json!!!');
+    await loadApp();
+    // Should fall back to defaults
+    expect(document.getElementById('prog-btn').classList.contains('active')).toBe(true);
+    expect(document.getElementById('patch-display').textContent).toBe('000');
+  });
+
+  test('ignores invalid state shape', async () => {
+    localStorage.setItem('qsr-control-state', JSON.stringify({ mode: 'bad', bank: 'x' }));
+    await loadApp();
+    expect(document.getElementById('prog-btn').classList.contains('active')).toBe(true);
+  });
+
+  test('saves state after bank change', async () => {
+    await loadApp();
+    const bankSel = document.getElementById('bank-select');
+    bankSel.value = '3';
+    bankSel.dispatchEvent(new Event('change'));
+    await jest.advanceTimersByTimeAsync(100);
+
+    const saved = JSON.parse(localStorage.getItem('qsr-control-state'));
+    expect(saved).toEqual({ mode: 'prog', bank: 3, patch: 0 });
+  });
+
+  test('saves state after patch change', async () => {
+    await loadApp();
+    document.getElementById('patch-next').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    const saved = JSON.parse(localStorage.getItem('qsr-control-state'));
+    expect(saved.patch).toBe(1);
+  });
+
+  test('saves state after mode switch', async () => {
+    await loadApp();
+    document.getElementById('mix-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    const saved = JSON.parse(localStorage.getItem('qsr-control-state'));
+    expect(saved.mode).toBe('mix');
+  });
+});
+
+// --- Search ---
+
+describe('search', () => {
+  test('search button opens modal and shows results', async () => {
+    await loadApp();
+    const modal = document.getElementById('search-modal');
+    expect(modal.classList.contains('hidden')).toBe(true);
+
+    document.getElementById('search-btn').click();
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    // Should show all presets (grouped) when input is empty
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBeGreaterThan(0);
+    const headers = document.querySelectorAll('.search-group-header');
+    expect(headers.length).toBeGreaterThan(0);
+  });
+
+  test('typing filters results', async () => {
+    await loadApp();
+    document.getElementById('search-btn').click();
+
+    const input = document.getElementById('search-input');
+    input.value = 'TrueStereo';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBe(1);
+    expect(items[0].textContent).toContain('TrueStereo');
+  });
+
+  test('filter checkboxes limit by mode', async () => {
+    await loadApp();
+    document.getElementById('search-btn').click();
+
+    // Uncheck mixes
+    const filterMix = document.getElementById('filter-mix');
+    filterMix.checked = false;
+    filterMix.dispatchEvent(new Event('change'));
+
+    const headers = document.querySelectorAll('.search-group-header');
+    const headerTexts = Array.from(headers).map(h => h.textContent);
+    expect(headerTexts.every(t => t.includes('PROG'))).toBe(true);
+  });
+
+  test('clicking a result selects it and closes modal', async () => {
+    await loadApp();
+    document.getElementById('search-btn').click();
+
+    const input = document.getElementById('search-input');
+    input.value = 'Titanium88';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    items[0].click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    const modal = document.getElementById('search-modal');
+    expect(modal.classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('patch-display').textContent).toBe('001');
+    expect(document.getElementById('bank-select').value).toBe('1');
+  });
+
+  test('selecting a mix result switches mode', async () => {
+    await loadApp();
+    document.getElementById('search-btn').click();
+
+    const input = document.getElementById('search-input');
+    input.value = 'Zen Piano';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    items[0].click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    expect(document.getElementById('mix-btn').classList.contains('active')).toBe(true);
+    expect(document.getElementById('patch-label').textContent).toBe('Mix');
+  });
+
+  test('Escape closes search modal', async () => {
+    await loadApp();
+    document.getElementById('search-btn').click();
+
+    const input = document.getElementById('search-input');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+    expect(document.getElementById('search-modal').classList.contains('hidden')).toBe(true);
+  });
+
+  test('clicking backdrop closes search modal', async () => {
+    await loadApp();
+    document.getElementById('search-btn').click();
+
+    const modal = document.getElementById('search-modal');
+    modal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    // Click on modal itself (backdrop) should close
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+
+  test('arrow keys navigate results and Enter selects', async () => {
+    await loadApp();
+    document.getElementById('search-btn').click();
+
+    const input = document.getElementById('search-input');
+    input.value = 'TrueStereo';
+    input.dispatchEvent(new Event('input'));
+
+    // Stub scrollIntoView (not available in jsdom)
+    const items = document.querySelectorAll('.search-result-item');
+    items.forEach(el => { el.scrollIntoView = jest.fn(); });
+
+    // Arrow down to highlight first result
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    expect(items[0].classList.contains('active')).toBe(true);
+
+    // Arrow up wraps to last
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    expect(items[items.length - 1].classList.contains('active')).toBe(true);
+
+    // Arrow down again to first
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+
+    // Enter selects
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await jest.advanceTimersByTimeAsync(100);
+
+    expect(document.getElementById('search-modal').classList.contains('hidden')).toBe(true);
+  });
+
+  test('search button disabled when no device', async () => {
+    mockAccess = new MockMIDIAccess();
+    setMockMIDIAccess(mockAccess);
+    await loadApp();
+    expect(document.getElementById('search-btn').disabled).toBe(true);
+  });
+});
+
+// --- Globals dialog ---
+
+describe('globals dialog', () => {
+  function buildGlobalDumpReply(unpacked) {
+    // Pack 20 bytes into 23 packed bytes using QS 7-bit encoding
+    const packed = [];
+    for (let i = 0; i + 6 < unpacked.length; i += 7) {
+      const b = unpacked.slice(i, i + 7);
+      packed.push(b[0] & 0x7F);
+      packed.push(((b[0] >> 7) & 0x01) | ((b[1] & 0x3F) << 1));
+      packed.push(((b[1] >> 6) & 0x03) | ((b[2] & 0x1F) << 2));
+      packed.push(((b[2] >> 5) & 0x07) | ((b[3] & 0x0F) << 3));
+      packed.push(((b[3] >> 4) & 0x0F) | ((b[4] & 0x07) << 4));
+      packed.push(((b[4] >> 3) & 0x1F) | ((b[5] & 0x03) << 5));
+      packed.push(((b[5] >> 2) & 0x3F) | ((b[6] & 0x01) << 6));
+      packed.push((b[6] >> 1) & 0x7F);
+    }
+    // Handle partial trailing group (6 remaining bytes → 7 packed bytes)
+    const tail = unpacked.length % 7;
+    if (tail > 0) {
+      const i = unpacked.length - tail;
+      const b = unpacked.slice(i);
+      while (b.length < 7) b.push(0);
+      packed.push(b[0] & 0x7F);
+      packed.push(((b[0] >> 7) & 0x01) | ((b[1] & 0x3F) << 1));
+      packed.push(((b[1] >> 6) & 0x03) | ((b[2] & 0x1F) << 2));
+      packed.push(((b[2] >> 5) & 0x07) | ((b[3] & 0x0F) << 3));
+      packed.push(((b[3] >> 4) & 0x0F) | ((b[4] & 0x07) << 4));
+      packed.push(((b[4] >> 3) & 0x1F) | ((b[5] & 0x03) << 5));
+      packed.push(((b[5] >> 2) & 0x3F) | ((b[6] & 0x01) << 6));
+    }
+    // F0 00 00 0E 0E 0A 00 <packed> F7
+    const msg = new Uint8Array(7 + packed.length + 1);
+    msg[0] = 0xF0; msg[1] = 0x00; msg[2] = 0x00; msg[3] = 0x0E; msg[4] = 0x0E;
+    msg[5] = 0x0A; msg[6] = 0x00;
+    for (let j = 0; j < packed.length; j++) msg[7 + j] = packed[j];
+    msg[msg.length - 1] = 0xF7;
+    return msg;
+  }
+
+  function setupGlobalReply(globalBytes) {
+    const origSend = qsrOutput.send;
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+        return;
+      }
+      // Global data dump request (opcode 0x0B)
+      if (arr[0] === 0xF0 && arr[5] === 0x0B) {
+        setTimeout(() => qsrInput.receive(buildGlobalDumpReply(globalBytes)), 0);
+        return;
+      }
+    });
+  }
+
+  test('opens and displays global parameters', async () => {
+    const globalData = new Array(20).fill(0);
+    globalData[1] = 3;   // Pitch Transpose = +3
+    globalData[2] = 0xCE; // Pitch Fine Tune = -50 (2's complement: 256-50=206=0xCE)
+    globalData[7] = 1;   // Controller A = CC 1
+    globalData[13] = 1;  // MIDI Program Select = On
+    globalData[17] = 0;  // General MIDI = Off
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    const modal = document.getElementById('globals-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    const body = document.getElementById('globals-body');
+    expect(body.innerHTML).toContain('Pitch Transpose');
+    // Check spinbox has value 3
+    const transposeInput = body.querySelector('input[data-byte="1"]');
+    expect(transposeInput.value).toBe('3');
+    // Check fine tune has -50
+    const fineInput = body.querySelector('input[data-byte="2"]');
+    expect(fineInput.value).toBe('-50');
+  });
+
+  test('editable spinbox sends global param on change', async () => {
+    const globalData = new Array(20).fill(0);
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    qsrOutput.send.mockClear();
+    const body = document.getElementById('globals-body');
+    const transposeInput = body.querySelector('input[data-byte="1"]');
+    transposeInput.value = '5';
+    transposeInput.dispatchEvent(new Event('change'));
+
+    // Should have sent a direct parameter edit (opcode 0x10)
+    const calls = qsrOutput.send.mock.calls;
+    const editCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      return d[0] === 0xF0 && d[5] === 0x10 && d[9] === 5;
+    });
+    expect(editCall).toBeTruthy();
+  });
+
+  test('editable spinbox sends 2s complement for negative values', async () => {
+    const globalData = new Array(20).fill(0);
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    qsrOutput.send.mockClear();
+    const body = document.getElementById('globals-body');
+    const fineInput = body.querySelector('input[data-byte="2"]');
+    fineInput.value = '-10';
+    fineInput.dispatchEvent(new Event('change'));
+
+    const calls = qsrOutput.send.mock.calls;
+    const editCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      // -10 + 256 = 246, split: MSB bit = (246>>7)&1 = 1, LSB = 246&0x7F = 118
+      return d[0] === 0xF0 && d[5] === 0x10;
+    });
+    expect(editCall).toBeTruthy();
+    const d = editCall[0] instanceof Uint8Array ? editCall[0] : new Uint8Array(editCall[0]);
+    const sentValue = ((d[8] & 0x01) << 7) | (d[9] & 0x7F);
+    expect(sentValue).toBe(246); // -10 as unsigned byte
+  });
+
+  test('spinbox clamps out-of-range values', async () => {
+    const globalData = new Array(20).fill(0);
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    const body = document.getElementById('globals-body');
+    const transposeInput = body.querySelector('input[data-byte="1"]');
+    transposeInput.value = '99';
+    transposeInput.dispatchEvent(new Event('change'));
+    expect(transposeInput.value).toBe('12'); // clamped to max
+  });
+
+  test('select dropdown sends value on change', async () => {
+    const globalData = new Array(20).fill(0);
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    qsrOutput.send.mockClear();
+    const body = document.getElementById('globals-body');
+    const select = body.querySelector('select[data-byte="13"]');
+    select.value = '2'; // Channel 1
+    select.dispatchEvent(new Event('change'));
+
+    const calls = qsrOutput.send.mock.calls;
+    const editCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      return d[0] === 0xF0 && d[5] === 0x10 && d[7] === 0x05 && d[9] === 2;
+    });
+    expect(editCall).toBeTruthy();
+  });
+
+  test('checkbox sends value on toggle', async () => {
+    const globalData = new Array(20).fill(0);
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    qsrOutput.send.mockClear();
+    const body = document.getElementById('globals-body');
+    const checkbox = body.querySelector('input[data-byte="17"]');
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+
+    const calls = qsrOutput.send.mock.calls;
+    const editCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      // GM: func=0, page=0, pot=1, value=1
+      return d[0] === 0xF0 && d[5] === 0x10 && d[9] === 1;
+    });
+    expect(editCall).toBeTruthy();
+  });
+
+  test('close button closes globals modal', async () => {
+    const globalData = new Array(20).fill(0);
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    document.getElementById('globals-close').click();
+    expect(document.getElementById('globals-modal').classList.contains('hidden')).toBe(true);
+  });
+
+  test('backdrop click closes globals modal', async () => {
+    const globalData = new Array(20).fill(0);
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    const modal = document.getElementById('globals-modal');
+    modal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+
+  test('Escape closes globals modal', async () => {
+    const globalData = new Array(20).fill(0);
+    setupGlobalReply(globalData);
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.getElementById('globals-modal').classList.contains('hidden')).toBe(true);
+  });
+
+  test('shows error when global dump request fails', async () => {
+    // Don't set up global reply so request times out
+    await loadApp();
+
+    document.getElementById('globals-btn').click();
+    await jest.advanceTimersByTimeAsync(6000);
+
+    const body = document.getElementById('globals-body');
+    expect(body.textContent).toContain('Failed');
+  });
+
+  test('globals button disabled when no device', async () => {
+    mockAccess = new MockMIDIAccess();
+    setMockMIDIAccess(mockAccess);
+    await loadApp();
+    expect(document.getElementById('globals-btn').disabled).toBe(true);
+  });
+});
+
 // --- State Change ---
 
 describe('statechange', () => {
