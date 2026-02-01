@@ -3,12 +3,28 @@
 const BANK_NAMES = ['User', 'Preset 1', 'Preset 2', 'Preset 3', 'GenMIDI'];
 const MODE_NAMES = { 0: 'Program', 1: 'Mix' };
 const QS_OPCODE_NAMES = {
-  0x00: 'Program Dump',
-  0x01: 'Program Dump Request',
+  0x00: 'User Program Dump',
+  0x01: 'User Program Dump Request',
+  0x02: 'Edit Program Dump',
+  0x03: 'Edit Program Dump Request',
+  0x04: 'Old Mix Dump',
+  0x05: 'Old Mix Dump Request',
+  0x06: 'User Effects Dump',
+  0x07: 'User Effects Dump Request',
+  0x08: 'Edit Effects Dump',
+  0x09: 'Edit Effects Dump Request',
+  0x0A: 'Global Data Dump',
+  0x0B: 'Global Data Dump Request',
+  0x0C: 'All Dump Request',
   0x0D: 'Mode Select',
-  0x0E: 'Mix Dump',
-  0x0F: 'Mix Dump Request',
+  0x0E: 'New Mix Dump',
+  0x0F: 'New Mix Dump Request',
   0x10: 'Direct Parameter Edit',
+  0x11: 'FLASH Sector Erase',
+  0x12: 'FLASH Sector Write',
+  0x13: 'FLASH Sector Read Request',
+  0x14: 'FLASH ACK',
+  0x15: 'FLASH NACK',
 };
 
 function hex(bytes) {
@@ -29,28 +45,66 @@ function describeSend(bytes) {
       const opcode = data[5];
       const opName = QS_OPCODE_NAMES[opcode] || `Opcode 0x${opcode.toString(16).padStart(2, '0')}`;
 
+      // Dump requests with a single index byte
+      if (opcode === 0x01) return `QS ${opName} -> program #${data[6]}`;
+      if (opcode === 0x03) {
+        const editNames = { 0: 'program edit buffer' };
+        return `QS ${opName} -> ${editNames[data[6]] || `mix channel ${data[6]}`}`;
+      }
+      if (opcode === 0x05) return `QS ${opName} -> mix #${data[6]}`;
+      if (opcode === 0x07) return `QS ${opName} -> effect #${data[6]}`;
+      if (opcode === 0x09) return `QS ${opName} -> ${data[6] === 0 ? 'program effects' : 'mix effects'}`;
+      if (opcode === 0x0F) return `QS ${opName} -> mix #${data[6]}`;
+
+      // Dump requests with no index
+      if (opcode === 0x0B) return `QS ${opName}`;
+      if (opcode === 0x0C) return `QS ${opName} (all programs + mixes + effects + global)`;
+
+      // Dumps with data
+      if (opcode === 0x00) return `QS ${opName} -> program #${data[6]} (${data.length} bytes)`;
+      if (opcode === 0x02) {
+        const editNames = { 0: 'program edit buffer' };
+        return `QS ${opName} -> ${editNames[data[6]] || `mix channel ${data[6]}`} (${data.length} bytes)`;
+      }
+      if (opcode === 0x04) return `QS ${opName} -> mix #${data[6]} (${data.length} bytes)`;
+      if (opcode === 0x06) return `QS ${opName} -> effect #${data[6]} (${data.length} bytes)`;
+      if (opcode === 0x08) return `QS ${opName} -> ${data[6] === 0 ? 'program effects' : 'mix effects'} (${data.length} bytes)`;
+      if (opcode === 0x0A) return `QS ${opName} (${data.length} bytes)`;
+      if (opcode === 0x0E) return `QS ${opName} -> mix #${data[6]} (${data.length} bytes)`;
+
+      // Mode select
       if (opcode === 0x0D) {
         const mode = MODE_NAMES[data[6]] || `unknown (${data[6]})`;
         return `QS Mode Select -> ${mode}`;
       }
-      if (opcode === 0x01) {
-        return `QS Program Dump Request -> User program #${data[6]}`;
-      }
-      if (opcode === 0x0F) {
-        return `QS Mix Dump Request -> User mix #${data[6]}`;
-      }
+
+      // Direct parameter edit
       if (opcode === 0x10) {
+        const mm = (data[6] >> 5) & 0x03;
         const func = data[6] & 0x1F;
+        const ss = (data[7] >> 5) & 0x03;
         const page = data[7] & 0x1F;
         const pot = (data[8] >> 1) & 0x03;
         const value = ((data[8] & 0x01) << 7) | (data[9] & 0x7F);
+        const modeLabels = ['Global', 'Mix', 'Program', 'Effects'];
         let extra = '';
-        if (func === 0 && page === 5 && pot === 0) {
+        if (mm === 0 && func === 0 && page === 5 && pot === 0) {
           const valNames = ['Off', 'On'];
           extra = ` (MIDI Program Select = ${valNames[value] || `Channel ${value - 1}`})`;
         }
-        return `QS Direct Parameter Edit -> func=${func} page=${page} pot=${pot} value=${value}${extra}`;
+        return `QS Direct Parameter Edit [${modeLabels[mm]}] -> func=${func} page=${page} pot=${pot} value=${value}${extra}`;
       }
+
+      // FLASH card operations
+      if (opcode === 0x11) return `QS ${opName} -> sector #${data[6]}`;
+      if (opcode === 0x12) return `QS ${opName} -> sector #${data[6]} block #${data[7]} (${data.length} bytes)`;
+      if (opcode === 0x13) return `QS ${opName} -> sector #${data[6]} block #${data[7]}`;
+      if (opcode === 0x14) return `QS ${opName}`;
+      if (opcode === 0x15) {
+        const errors = ['No card/not FLASH', 'Write protected', 'Erase failed', 'Checksum mismatch', 'Program failed'];
+        return `QS ${opName} -> ${errors[data[6]] || `error ${data[6]}`}`;
+      }
+
       return `QS SysEx: ${opName} (${data.length} bytes)`;
     }
     return `SysEx message (${data.length} bytes)`;
@@ -94,17 +148,9 @@ function describeReceive(bytes) {
       const model = MODELS[member] || `member 0x${member.toString(16)}`;
       return `Device Identity Reply <- manufacturer ${mfr}, model ${model}`;
     }
-    // Alesis QS SysEx response
+    // Alesis QS SysEx — use describeSend for full detail (same format both directions)
     if (data[1] === 0x00 && data[2] === 0x00 && data[3] === 0x0E && data[4] === 0x0E) {
-      const opcode = data[5];
-      const opName = QS_OPCODE_NAMES[opcode] || `Opcode 0x${opcode.toString(16).padStart(2, '0')}`;
-      if (opcode === 0x00) {
-        return `QS Program Dump <- program #${data[6]} (${data.length} bytes)`;
-      }
-      if (opcode === 0x0E) {
-        return `QS Mix Dump <- mix #${data[6]} (${data.length} bytes)`;
-      }
-      return `QS SysEx Response: ${opName} (${data.length} bytes)`;
+      return describeSend(bytes);
     }
     return `SysEx message received (${data.length} bytes)`;
   }

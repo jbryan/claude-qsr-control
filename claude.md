@@ -35,19 +35,41 @@ Manufacturer ID: `00 00 0E` (Alesis). Device ID byte: `0E` (QS family).
 
 All QS SysEx messages: `F0 00 00 0E 0E <opcode> <data...> F7`
 
-Key opcodes:
-- `0x00` — Program Dump (response). Name at bit offset 8 in unpacked data.
-- `0x01` — Program Dump Request. `F0 00 00 0E 0E 01 <num> F7`
-- `0x0D` — Mode Select. `F0 00 00 0E 0E 0D <0=prog|1=mix> F7`
-- `0x0E` — Mix Dump (response). Name at bit offset 5 in unpacked data.
-- `0x0F` — Mix Dump Request. `F0 00 00 0E 0E 0F <num> F7`
-- `0x10` — Direct Parameter Edit. Byte layout: `<0mmfffff> <0ssppppp> <0ccccddv> <0vvvvvvv>`
+All opcodes (all implemented in `midi.js`):
+
+| Opcode | Name | Direction | Function in midi.js |
+|--------|------|-----------|---------------------|
+| `0x00` | User Program Dump | send/receive | `sendUserProgram()` / `requestUserProgram()` |
+| `0x01` | User Program Dump Request | send | (used internally by `requestUserProgram`) |
+| `0x02` | Edit Program Dump | send/receive | `sendEditProgram()` / `requestEditProgram()` |
+| `0x03` | Edit Program Dump Request | send | (used internally by `requestEditProgram`) |
+| `0x04` | Old Mix Dump (legacy) | send/receive | `sendOldMix()` / `requestOldMix()` |
+| `0x05` | Old Mix Dump Request | send | (used internally by `requestOldMix`) |
+| `0x06` | User Effects Dump | send/receive | `sendUserEffects()` / `requestUserEffects()` |
+| `0x07` | User Effects Dump Request | send | (used internally by `requestUserEffects`) |
+| `0x08` | Edit Effects Dump | send/receive | `sendEditEffects()` / `requestEditEffects()` |
+| `0x09` | Edit Effects Dump Request | send | (used internally by `requestEditEffects`) |
+| `0x0A` | Global Data Dump | send/receive | `sendGlobalData()` / `requestGlobalData()` |
+| `0x0B` | Global Data Dump Request | send | (used internally by `requestGlobalData`) |
+| `0x0C` | All Dump Request | send | `requestAllDump()` — caller handles responses |
+| `0x0D` | Mode Select | send | `sendModeSelect()` |
+| `0x0E` | New Mix Dump (v2.00+) | send/receive | `sendNewMix()` / `requestNewMix()` |
+| `0x0F` | New Mix Dump Request | send | (used internally by `requestNewMix`) |
+| `0x10` | Direct Parameter Edit | send | `sendGlobalParam()` / `sendParamEdit()` |
+| `0x11` | FLASH Sector Erase | send | `flashSectorErase()` |
+| `0x12` | FLASH Sector Write | send/receive | `flashSectorWrite()` / `requestFlashSectorRead()` response |
+| `0x13` | FLASH Sector Read Request | send | `requestFlashSectorRead()` |
+| `0x14` | FLASH ACK | receive | handled internally by flash functions |
+| `0x15` | FLASH NACK | receive | handled internally by flash functions |
 
 Patch names are only readable from User bank (bank 0) via SysEx dump requests.
+Name bit offsets: programs at bit 8, mixes at bit 5 in unpacked data.
 
 ## Data Encoding
 
-The QSR uses 7-bit MIDI packing: every 8 MIDI bytes encode 7 data bytes. Patch names are 10 characters, each a 7-bit value (0-95) mapped to ASCII 32-127, extracted at a bit offset that differs between programs (bit 8) and mixes (bit 5).
+The QSR uses 7-bit MIDI packing: every 8 MIDI bytes encode 7 data bytes. Use `packQSData()` and `unpackQSData()` (both exported from midi.js) for conversion. Patch names are 10 characters, each a 7-bit value (0-95) mapped to ASCII 32-127, extracted at a bit offset that differs between programs (bit 8) and mixes (bit 5).
+
+`sendParamEdit()` is the full-featured parameter edit function supporting all four edit modes (Global/Mix/Program/Effects) with sound, channel, and pot selection. `sendGlobalParam()` is a convenience wrapper for Global mode edits only.
 
 ## Banks and Ranges
 

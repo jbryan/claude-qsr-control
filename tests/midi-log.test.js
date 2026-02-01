@@ -41,12 +41,12 @@ describe('logSend', () => {
 
   test('QS Program Dump Request', () => {
     logSend(new Uint8Array([0xF0, 0x00, 0x00, 0x0E, 0x0E, 0x01, 0x03, 0xF7]));
-    expect(lastLog()).toContain('QS Program Dump Request -> User program #3');
+    expect(lastLog()).toContain('User Program Dump Request -> program #3');
   });
 
   test('QS Mix Dump Request', () => {
     logSend(new Uint8Array([0xF0, 0x00, 0x00, 0x0E, 0x0E, 0x0F, 0x07, 0xF7]));
-    expect(lastLog()).toContain('QS Mix Dump Request -> User mix #7');
+    expect(lastLog()).toContain('New Mix Dump Request -> mix #7');
   });
 
   test('QS Direct Parameter Edit (MIDI Program Select = Off)', () => {
@@ -76,8 +76,9 @@ describe('logSend', () => {
     expect(log).not.toContain('MIDI Program Select');
   });
 
-  test('QS SysEx with unknown opcode', () => {
-    logSend(new Uint8Array([0xF0, 0x00, 0x00, 0x0E, 0x0E, 0x02, 0x00, 0xF7]));
+  test('QS SysEx with known opcode falls through to generic', () => {
+    // Use a truly unknown opcode (0xFF) to hit the fallback
+    logSend(new Uint8Array([0xF0, 0x00, 0x00, 0x0E, 0x0E, 0xFF, 0x00, 0xF7]));
     expect(lastLog()).toContain('QS SysEx:');
     expect(lastLog()).toContain('8 bytes');
   });
@@ -163,7 +164,7 @@ describe('logReceive', () => {
     data[5] = 0x00; data[6] = 0x05;
     data[29] = 0xF7;
     logReceive(data);
-    expect(lastLog()).toContain('QS Program Dump <- program #5');
+    expect(lastLog()).toContain('User Program Dump -> program #5');
   });
 
   test('QS Mix Dump response', () => {
@@ -173,17 +174,17 @@ describe('logReceive', () => {
     data[5] = 0x0E; data[6] = 0x02;
     data[29] = 0xF7;
     logReceive(data);
-    expect(lastLog()).toContain('QS Mix Dump <- mix #2');
+    expect(lastLog()).toContain('New Mix Dump -> mix #2');
   });
 
   test('QS SysEx unknown opcode response', () => {
     const data = new Uint8Array(10);
     data[0] = 0xF0;
     data[1] = 0x00; data[2] = 0x00; data[3] = 0x0E; data[4] = 0x0E;
-    data[5] = 0x03;
+    data[5] = 0xFF;
     data[9] = 0xF7;
     logReceive(data);
-    expect(lastLog()).toContain('QS SysEx Response');
+    expect(lastLog()).toContain('QS SysEx:');
   });
 
   test('Unknown SysEx received', () => {
