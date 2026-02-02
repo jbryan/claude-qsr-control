@@ -48,12 +48,14 @@ function setupDOM() {
         <div id="mix-info-body" class="globals-body"></div>
       </div>
     </div>
+    <button id="refresh-btn" class="icon-btn" disabled title="Refresh User Banks">R</button>
     <button id="syx-open-btn" class="icon-btn" title="Open SysEx File">F</button>
     <input type="file" id="syx-file-input" accept=".syx" class="hidden">
     <div id="syx-viewer-modal" class="search-modal hidden">
       <div class="search-modal-content prog-info-content">
         <div class="globals-modal-header">
           <span class="globals-title">SysEx File Contents</span>
+          <button id="syx-send-btn" class="icon-btn" disabled>S</button>
           <button id="syx-viewer-close" class="icon-btn">&times;</button>
         </div>
         <div id="syx-viewer-body" class="globals-body"></div>
@@ -110,6 +112,11 @@ beforeEach(async () => {
   qsrOutput = dev.output;
   autoReplyIdentity(qsrOutput, qsrInput);
   setMockMIDIAccess(mockAccess);
+  // Pre-seed user bank cache to prevent auto-refresh during tests
+  localStorage.setItem('qsr-user-banks', JSON.stringify({
+    programs: Array.from({ length: 128 }, (_, i) => `User ${String(i).padStart(3, '0')}`),
+    mixes: Array.from({ length: 100 }, (_, i) => `User Mix ${String(i).padStart(3, '0')}`),
+  }));
 });
 
 afterEach(() => {
@@ -1137,5 +1144,81 @@ describe('statechange', () => {
 
     // Should still show connected
     expect(document.getElementById('lcd-line1').textContent).toContain('QSR');
+  });
+});
+
+// --- User Bank Names ---
+
+describe('user bank names', () => {
+  test('refresh button enabled after device connection', async () => {
+    await loadApp();
+    expect(document.getElementById('refresh-btn').disabled).toBe(false);
+  });
+
+  test('refresh button disabled when no device', async () => {
+    mockAccess = new MockMIDIAccess();
+    setMockMIDIAccess(mockAccess);
+    await loadApp();
+    expect(document.getElementById('refresh-btn').disabled).toBe(true);
+  });
+
+  test('localStorage round-trip for user bank data', async () => {
+    const data = {
+      programs: Array.from({ length: 128 }, (_, i) => `Prog ${i}`),
+      mixes: Array.from({ length: 100 }, (_, i) => `Mix ${i}`),
+    };
+    localStorage.setItem('qsr-user-banks', JSON.stringify(data));
+    await loadApp();
+
+    // Verify it was loaded (search should include user bank entries)
+    document.getElementById('search-btn').click();
+    const input = document.getElementById('search-input');
+    input.value = 'Prog 42';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBeGreaterThan(0);
+    expect(items[0].textContent).toContain('Prog 42');
+  });
+
+  test('user bank names appear in search results after caching', async () => {
+    const data = {
+      programs: Array.from({ length: 128 }, (_, i) => `MyProg${i}`),
+      mixes: Array.from({ length: 100 }, (_, i) => `MyMix${i}`),
+    };
+    localStorage.setItem('qsr-user-banks', JSON.stringify(data));
+    await loadApp();
+
+    document.getElementById('search-btn').click();
+    const input = document.getElementById('search-input');
+    input.value = 'MyMix5';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    const names = Array.from(items).map(el => el.textContent);
+    expect(names.some(n => n.includes('MyMix5'))).toBe(true);
+
+    // Verify group header for user bank
+    const headers = document.querySelectorAll('.search-group-header');
+    const headerTexts = Array.from(headers).map(h => h.textContent);
+    expect(headerTexts.some(t => t.includes('User'))).toBe(true);
+  });
+
+  test('search shows user programs under PROG — User group', async () => {
+    const data = {
+      programs: ['TestProg'],
+      mixes: [],
+    };
+    localStorage.setItem('qsr-user-banks', JSON.stringify(data));
+    await loadApp();
+
+    document.getElementById('search-btn').click();
+    const input = document.getElementById('search-input');
+    input.value = 'TestProg';
+    input.dispatchEvent(new Event('input'));
+
+    const headers = document.querySelectorAll('.search-group-header');
+    expect(headers.length).toBe(1);
+    expect(headers[0].textContent).toBe('PROG — User');
   });
 });

@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - SysEx file viewer — open `.syx` dump files and browse programs, mixes, effects, and global settings in a tabbed dialog
+- User bank refresh — download all 128 user program names and 100 user mix names from the connected device, cache them in localStorage, and include them in search results
+- Refresh button in header to manually trigger user bank name download
+- Auto-refresh of user bank names on first connection when no cached data exists
+
+### Fixed
+- Increase SysEx file upload inter-message delay from 50ms to 300ms to prevent dropped programs during full dumps
 
 ## [1.0.0] - 2025
 

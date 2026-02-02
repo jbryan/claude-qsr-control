@@ -36,7 +36,8 @@ them for non-critical, low-risk tasks.
 ## Features
 
 - **Program & Mix selection** — Browse and select programs and mixes across User, Preset, and General MIDI banks
-- **Search** — Type-ahead search across all preset names with mode/bank filtering
+- **User bank names** — Automatically downloads and caches all user program and mix names; refresh via header button
+- **Search** — Type-ahead search across all preset and user bank names with mode/bank filtering
 - **Global settings** — View and edit global parameters (transpose, tuning, controllers, MIDI settings)
 - **Program info** — Inspect full SysEx program parameters including per-sound details (keyboard and drum modes), LFOs, envelopes, mod routings, and tracking generators
 - **Mix info** — Inspect mix parameters with per-channel program, level, pitch, note range, and MIDI control settings
@@ -81,6 +82,7 @@ npm test
 6. Click the gear icon to view/edit global settings
 7. Click the **i** button on the LCD to inspect the current program or mix
 8. Click the folder icon to open and browse a `.syx` dump file
+9. Click the refresh icon to re-download user bank names from the device
 
 ## License
 

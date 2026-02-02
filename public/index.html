@@ -23,6 +23,12 @@
           </svg>
         </button>
         <input type="file" id="syx-file-input" accept=".syx" class="hidden">
+        <button id="refresh-btn" class="icon-btn" disabled title="Refresh User Banks">
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
+            <path d="M10 3a7 7 0 00-7 7h2.5L2 14l-2-4h2a8 8 0 1116 0h-2A6 6 0 0010 4z"/>
+            <path d="M10 17a7 7 0 007-7h-2.5l3.5-4 2 4h-2a8 8 0 01-16 0h2a6 6 0 006 6z"/>
+          </svg>
+        </button>
         <button id="globals-btn" class="icon-btn" disabled title="Global Settings">
           <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
             <path d="M10 13a3 3 0 100-6 3 3 0 000 6zm7.43-2.18l1.44 1.13a.36.36 0 01.08.46l-1.36 2.36a.36.36 0 01-.44.16l-1.7-.68a6.7 6.7 0 01-1.14.66l-.26 1.8a.35.35 0 01-.35.3h-2.73a.35.35 0 01-.35-.3l-.25-1.8a7 7 0 01-1.15-.66l-1.7.68a.36.36 0 01-.43-.16L5.73 12.4a.36.36 0 01.08-.46l1.44-1.13a5.6 5.6 0 010-1.32L5.81 8.36a.36.36 0 01-.08-.46l1.36-2.36a.36.36 0 01.43-.16l1.7.68c.35-.26.73-.48 1.15-.66l.25-1.8a.35.35 0 01.35-.3h2.73a.35.35 0 01.35.3l.26 1.8c.41.18.79.4 1.14.66l1.7-.68a.36.36 0 01.44.16l1.36 2.36a.36.36 0 01-.08.46l-1.44 1.13a5.6 5.6 0 010 1.32z"/>
@@ -117,6 +123,12 @@
       <div class="search-modal-content prog-info-content">
         <div class="globals-modal-header">
           <span class="globals-title">SysEx File Contents</span>
+          <button id="syx-send-btn" class="icon-btn" disabled title="Send to Device">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor">
+              <path d="M10 2l5 5h-3v6h-4V7H5l5-5z"/>
+              <path d="M4 15h12v2H4z"/>
+            </svg>
+          </button>
           <button id="syx-viewer-close" class="icon-btn" title="Close">&times;</button>
         </div>
         <div id="syx-viewer-body" class="globals-body">

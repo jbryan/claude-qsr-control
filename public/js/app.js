@@ -39,6 +39,8 @@ const syxFileInput = document.getElementById('syx-file-input');
 const syxViewerModal = document.getElementById('syx-viewer-modal');
 const syxViewerBody = document.getElementById('syx-viewer-body');
 const syxViewerClose = document.getElementById('syx-viewer-close');
+const syxSendBtn = document.getElementById('syx-send-btn');
+const refreshBtn = document.getElementById('refresh-btn');
 
 const MIDI_CHANNEL = 0;
 
@@ -54,6 +56,88 @@ const allPresets = getAllPresets();
 let searchHighlight = -1;
 
 const STORAGE_KEY = 'qsr-control-state';
+const USERBANK_KEY = 'qsr-user-banks';
+let userBankNames = null;
+
+function loadUserBankNames() {
+  try {
+    const raw = localStorage.getItem(USERBANK_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (Array.isArray(data.programs) && Array.isArray(data.mixes)) {
+      return data;
+    }
+  } catch {
+    // Corrupt or unavailable
+  }
+  return null;
+}
+
+function saveUserBankNames(data) {
+  try {
+    localStorage.setItem(USERBANK_KEY, JSON.stringify(data));
+  } catch {
+    // localStorage unavailable
+  }
+}
+
+function getUserBankPresets() {
+  if (!userBankNames) return [];
+  const results = [];
+  for (let i = 0; i < userBankNames.programs.length; i++) {
+    const name = userBankNames.programs[i];
+    if (name) results.push({ mode: 'prog', bank: 0, patch: i, name });
+  }
+  for (let i = 0; i < userBankNames.mixes.length; i++) {
+    const name = userBankNames.mixes[i];
+    if (name) results.push({ mode: 'mix', bank: 0, patch: i, name });
+  }
+  return results;
+}
+
+async function refreshUserBanks() {
+  if (!activeDevice) return;
+  refreshBtn.disabled = true;
+  const programs = [];
+  const mixes = [];
+  const total = 228;
+
+  for (let i = 0; i < 128; i++) {
+    lcdLine1.textContent = `Refreshing ${i + 1}/${total}...`;
+    try {
+      const name = await requestPatchName(
+        activeDevice.device.output,
+        activeDevice.device.input,
+        'prog', 0, i,
+      );
+      programs.push(name || `User ${String(i).padStart(3, '0')}`);
+    } catch {
+      programs.push(`User ${String(i).padStart(3, '0')}`);
+    }
+  }
+
+  for (let i = 0; i < 100; i++) {
+    lcdLine1.textContent = `Refreshing ${128 + i + 1}/${total}...`;
+    try {
+      const name = await requestPatchName(
+        activeDevice.device.output,
+        activeDevice.device.input,
+        'mix', 0, i,
+      );
+      mixes.push(name || `User Mix ${String(i).padStart(3, '0')}`);
+    } catch {
+      mixes.push(`User Mix ${String(i).padStart(3, '0')}`);
+    }
+  }
+
+  const data = { programs, mixes };
+  userBankNames = data;
+  saveUserBankNames(data);
+  refreshBtn.disabled = false;
+  if (activeDevice) {
+    updateLCD();
+  }
+}
 
 function saveState() {
   try {
@@ -165,6 +249,7 @@ function updateBankPatchUI() {
   patchNext.disabled = !connected;
   searchBtn.disabled = !connected;
   globalsBtn.disabled = !connected;
+  refreshBtn.disabled = !connected;
   patchLabel.textContent = currentMode === 'prog' ? 'Program' : 'Mix';
   bankSelect.value = currentBank;
   patchDisplay.textContent = String(currentPatch).padStart(3, '0');
@@ -279,6 +364,8 @@ async function autoScan() {
     // CC#0 bank select works and mode switching behaves correctly.
     sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0);
     restoreOrDefaultState();
+    userBankNames = loadUserBankNames();
+    if (!userBankNames) refreshUserBanks();
   } else {
     activeDevice = null;
     updateModeButtons();
@@ -305,6 +392,8 @@ async function handleIdentify() {
     activeDevice = { device, identity };
     sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0); // GM off
     restoreOrDefaultState();
+    userBankNames = loadUserBankNames();
+    if (!userBankNames) refreshUserBanks();
   } catch (err) {
     setStatus(err.message, 'error');
   } finally {
@@ -342,6 +431,7 @@ patchNext.addEventListener('click', () => {
   if (activeDevice) selectPatch(currentPatch + 1);
 });
 rescanBtn.addEventListener('click', () => autoScan());
+refreshBtn.addEventListener('click', () => refreshUserBanks());
 advancedBtn.addEventListener('click', () => {
   advancedPanel.classList.toggle('hidden');
 });
@@ -367,13 +457,14 @@ function renderSearchResults(query) {
   const lower = query.toLowerCase();
   const showProg = filterProg.checked;
   const showMix = filterMix.checked;
-  const matches = allPresets.filter(p => {
+  const combined = [...getUserBankPresets(), ...allPresets];
+  const matches = combined.filter(p => {
     if (p.mode === 'prog' && !showProg) return false;
     if (p.mode === 'mix' && !showMix) return false;
     if (lower && !p.name.toLowerCase().includes(lower)) return false;
     return true;
   });
-  const bankNames = ['', 'Preset 1', 'Preset 2', 'Preset 3', 'GenMIDI'];
+  const bankNames = ['User', 'Preset 1', 'Preset 2', 'Preset 3', 'GenMIDI'];
   let lastGroup = '';
   for (const p of matches) {
     const modeName = p.mode === 'prog' ? 'PROG' : 'MIX';
@@ -1098,6 +1189,7 @@ function parseSyxFile(arrayBuffer) {
   const newMixes = [];
   const oldMixes = [];
   const effects = [];
+  const messages = [];
   let global = null;
 
   // Split into individual SysEx messages (F0...F7)
@@ -1110,6 +1202,7 @@ function parseSyxFile(arrayBuffer) {
     if (i >= data.length) break;
     i++; // include F7
     const msg = data.slice(start, i);
+    messages.push(msg);
 
     try {
       // Validate Alesis QS header: 00 00 0E 0E at bytes 1-4
@@ -1145,7 +1238,7 @@ function parseSyxFile(arrayBuffer) {
     }
   }
 
-  return { programs, newMixes, oldMixes, effects, global };
+  return { programs, newMixes, oldMixes, effects, global, messages };
 }
 
 function renderSyxViewer(parsed, filename) {
@@ -1223,9 +1316,36 @@ function renderSyxViewer(parsed, filename) {
   });
 }
 
+let currentSyxParsed = null;
+
+function updateSyxSendBtn() {
+  syxSendBtn.disabled = !activeDevice || !currentSyxParsed || currentSyxParsed.messages.length === 0;
+}
+
+async function sendSyxToDevice() {
+  if (!activeDevice || !currentSyxParsed) return;
+  const msgs = currentSyxParsed.messages;
+  const titleEl = syxViewerModal.querySelector('.globals-title');
+  const originalTitle = titleEl.textContent;
+  syxSendBtn.disabled = true;
+
+  for (let i = 0; i < msgs.length; i++) {
+    titleEl.textContent = `Sending ${i + 1}/${msgs.length}...`;
+    activeDevice.device.output.send(msgs[i]);
+    if (i < msgs.length - 1) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+
+  titleEl.textContent = originalTitle;
+  updateSyxSendBtn();
+}
+
 function closeSyxViewer() {
   syxViewerModal.classList.add('hidden');
 }
+
+syxSendBtn.addEventListener('click', sendSyxToDevice);
 
 syxOpenBtn.addEventListener('click', () => {
   syxFileInput.click();
@@ -1237,8 +1357,10 @@ syxFileInput.addEventListener('change', () => {
   const reader = new FileReader();
   reader.onload = () => {
     const parsed = parseSyxFile(reader.result);
+    currentSyxParsed = parsed;
     renderSyxViewer(parsed, file.name);
     syxViewerModal.classList.remove('hidden');
+    updateSyxSendBtn();
   };
   reader.readAsArrayBuffer(file);
   syxFileInput.value = '';
