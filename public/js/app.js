@@ -1,4 +1,4 @@
-import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestPatchName, requestGlobalData, requestUserProgram, unpackQSData } from './midi.js';
+import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestPatchName, requestGlobalData, requestUserProgram, requestNewMix, unpackQSData } from './midi.js';
 import { getPresetName, getAllPresets } from './presets.js';
 import { getKeyboardSampleName, getDrumSampleName } from './samples.js';
 
@@ -31,6 +31,14 @@ const progInfoBtn = document.getElementById('prog-info-btn');
 const progInfoModal = document.getElementById('prog-info-modal');
 const progInfoBody = document.getElementById('prog-info-body');
 const progInfoClose = document.getElementById('prog-info-close');
+const mixInfoModal = document.getElementById('mix-info-modal');
+const mixInfoBody = document.getElementById('mix-info-body');
+const mixInfoClose = document.getElementById('mix-info-close');
+const syxOpenBtn = document.getElementById('syx-open-btn');
+const syxFileInput = document.getElementById('syx-file-input');
+const syxViewerModal = document.getElementById('syx-viewer-modal');
+const syxViewerBody = document.getElementById('syx-viewer-body');
+const syxViewerClose = document.getElementById('syx-viewer-close');
 
 const MIDI_CHANNEL = 0;
 
@@ -146,7 +154,7 @@ function maxPatch() {
 }
 
 function updateProgInfoVisibility() {
-  const show = activeDevice && currentMode === 'prog' && currentBank === 0;
+  const show = activeDevice && ((currentMode === 'prog' && currentBank === 0) || currentMode === 'mix');
   progInfoBtn.classList.toggle('hidden', !show);
 }
 
@@ -928,7 +936,10 @@ function closeProgInfo() {
   progInfoModal.classList.add('hidden');
 }
 
-progInfoBtn.addEventListener('click', openProgInfo);
+progInfoBtn.addEventListener('click', () => {
+  if (currentMode === 'mix') openMixInfo();
+  else openProgInfo();
+});
 progInfoClose.addEventListener('click', closeProgInfo);
 progInfoModal.addEventListener('click', (e) => {
   if (e.target === progInfoModal) closeProgInfo();
@@ -936,6 +947,310 @@ progInfoModal.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !progInfoModal.classList.contains('hidden')) {
     closeProgInfo();
+  }
+});
+
+// --- Mix Info dialog ---
+
+const MIX_PROG_TYPE_LABELS = ['User', 'Preset 1', 'Preset 2', 'Preset 3', 'GenMIDI'];
+const MIX_OUTPUT_LABELS = ['Main', 'Aux', 'Off', 'Spare'];
+
+const MIX_CHANNEL_PARAMS = [
+  { name: 'Program Number', bits: 7, bitAddr: 0, offset: 0, section: 'Program' },
+  { name: 'Program Type', bits: 4, bitAddr: 7, offset: 0, section: 'Program', format: fmtLookup(MIX_PROG_TYPE_LABELS) },
+  { name: 'Enable', bits: 1, bitAddr: 11, offset: 0, section: 'Program', format: fmtBool('On', 'Off') },
+  { name: 'Volume', bits: 7, bitAddr: 12, offset: 0, section: 'Level' },
+  { name: 'Pan', bits: 3, bitAddr: 19, offset: 0, section: 'Level', format: fmtLookup(PAN_LABELS) },
+  { name: 'Output', bits: 2, bitAddr: 22, offset: 0, section: 'Level', format: fmtLookup(MIX_OUTPUT_LABELS) },
+  { name: 'Effect Level', bits: 7, bitAddr: 24, offset: 0, section: 'Level' },
+  { name: 'Effect Bus', bits: 3, bitAddr: 31, offset: 0, section: 'Level', format: fmtLookup(EFFECT_BUS_LABELS) },
+  { name: 'Pitch Octave', bits: 3, bitAddr: 34, offset: -2, section: 'Pitch', format: fmtSigned(-2) },
+  { name: 'Pitch Semitone', bits: 5, bitAddr: 37, offset: -12, section: 'Pitch', format: fmtSigned(-12) },
+  { name: 'Low Note', bits: 7, bitAddr: 42, offset: 0, section: 'Note Range', format: fmtNote },
+  { name: 'High Note', bits: 7, bitAddr: 49, offset: 0, section: 'Note Range', format: fmtNote },
+  { name: 'MIDI In', bits: 1, bitAddr: 56, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'MIDI Out', bits: 1, bitAddr: 57, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'MIDI Group', bits: 1, bitAddr: 58, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Wheels', bits: 1, bitAddr: 59, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Aftertouch', bits: 1, bitAddr: 60, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Sustain Pedal', bits: 1, bitAddr: 61, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Pedals/Controllers', bits: 1, bitAddr: 62, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+];
+
+function extractMixName(unpacked) {
+  let name = '';
+  for (let i = 0; i < 10; i++) {
+    name += String.fromCharCode(extractBits(unpacked, 5 + i * 7, 7) + 32);
+  }
+  return name.trim();
+}
+
+function renderMixInfo(unpacked) {
+  const mixName = extractMixName(unpacked);
+  const effectMidiPC = extractBits(unpacked, 0, 1);
+  const effectChannel = extractBits(unpacked, 1, 4);
+
+  // Common section
+  let html = '<table class="globals-table"><tbody>';
+  html += `<tr><td>Mix Name</td><td>${escapeHTML(mixName)}</td></tr>`;
+  html += `<tr><td>Effect MIDI PC</td><td>${effectMidiPC ? 'On' : 'Off'}</td></tr>`;
+  html += `<tr><td>Effect Channel</td><td>${effectChannel + 1}</td></tr>`;
+  html += '</tbody></table>';
+
+  // Build channel metadata
+  const channels = [];
+  for (let ch = 0; ch < 16; ch++) {
+    const baseBit = (10 + ch * 8) * 8;
+    const enabled = extractBits(unpacked, baseBit + 11, 1);
+    channels.push({ index: ch, baseBit, enabled });
+  }
+
+  // Tab bar
+  html += '<div class="prog-info-tabs">';
+  for (const ch of channels) {
+    const label = `Ch ${ch.index + 1}`;
+    const active = ch.index === 0 ? ' active' : '';
+    const disabled = !ch.enabled ? ' disabled' : '';
+    html += `<button class="prog-info-tab${active}" data-tab="${ch.index}"${disabled}>${label}</button>`;
+  }
+  html += '</div>';
+
+  // Tab panels
+  for (const ch of channels) {
+    const active = ch.index === 0 ? ' active' : '';
+    html += `<div class="prog-info-panel${active}" data-panel="${ch.index}">`;
+    if (!ch.enabled) {
+      html += `<p class="globals-loading">Channel ${ch.index + 1} — Disabled</p>`;
+    } else {
+      html += '<div class="prog-info-sections">';
+      let currentSection = '';
+      let rows = '';
+      for (const p of MIX_CHANNEL_PARAMS) {
+        if (p.section !== currentSection) {
+          if (currentSection) {
+            html += renderSectionBlock(currentSection, rows);
+          }
+          currentSection = p.section;
+          rows = '';
+        }
+        const raw = extractBits(unpacked, ch.baseBit + p.bitAddr, p.bits);
+        const val = p.format ? p.format(raw) : (p.offset ? String(raw + p.offset) : String(raw));
+        rows += `<tr><td>${escapeHTML(p.name)}</td><td>${escapeHTML(String(val))}</td></tr>`;
+      }
+      if (currentSection) {
+        html += renderSectionBlock(currentSection, rows);
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  mixInfoBody.innerHTML = html;
+
+  // Wire up tab switching
+  mixInfoBody.querySelectorAll('.prog-info-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      mixInfoBody.querySelector('.prog-info-tab.active')?.classList.remove('active');
+      mixInfoBody.querySelector('.prog-info-panel.active')?.classList.remove('active');
+      tab.classList.add('active');
+      mixInfoBody.querySelector(`.prog-info-panel[data-panel="${tab.dataset.tab}"]`)?.classList.add('active');
+    });
+  });
+}
+
+async function openMixInfo() {
+  mixInfoModal.classList.remove('hidden');
+  mixInfoBody.innerHTML = '<p class="globals-loading">Requesting mix data...</p>';
+  if (!activeDevice) return;
+  try {
+    const response = await requestNewMix(
+      activeDevice.device.output,
+      activeDevice.device.input,
+      currentPatch,
+    );
+    const packed = response.slice(7, response.length - 1);
+    const unpacked = unpackQSData(packed);
+    renderMixInfo(unpacked);
+  } catch {
+    mixInfoBody.innerHTML = '<p class="globals-loading">Failed to read mix data.</p>';
+  }
+}
+
+function closeMixInfo() {
+  mixInfoModal.classList.add('hidden');
+}
+
+mixInfoClose.addEventListener('click', closeMixInfo);
+mixInfoModal.addEventListener('click', (e) => {
+  if (e.target === mixInfoModal) closeMixInfo();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !mixInfoModal.classList.contains('hidden')) {
+    closeMixInfo();
+  }
+});
+
+// --- SysEx File Viewer ---
+
+function parseSyxFile(arrayBuffer) {
+  const data = new Uint8Array(arrayBuffer);
+  const programs = [];
+  const newMixes = [];
+  const oldMixes = [];
+  const effects = [];
+  let global = null;
+
+  // Split into individual SysEx messages (F0...F7)
+  let i = 0;
+  while (i < data.length) {
+    if (data[i] !== 0xF0) { i++; continue; }
+    const start = i;
+    i++;
+    while (i < data.length && data[i] !== 0xF7) i++;
+    if (i >= data.length) break;
+    i++; // include F7
+    const msg = data.slice(start, i);
+
+    try {
+      // Validate Alesis QS header: 00 00 0E 0E at bytes 1-4
+      if (msg.length < 8 || msg[1] !== 0x00 || msg[2] !== 0x00 || msg[3] !== 0x0E || msg[4] !== 0x0E) {
+        continue;
+      }
+      const opcode = msg[5];
+      const num = msg[6];
+      const packed = msg.slice(7, msg.length - 1);
+      const unpacked = unpackQSData(packed);
+
+      switch (opcode) {
+        case 0x00: // User Program
+          programs.push({ num, name: extractProgName(unpacked) });
+          break;
+        case 0x0E: // New Mix (v2+)
+          newMixes.push({ num, name: extractMixName(unpacked) });
+          break;
+        case 0x04: // Old Mix (<v2)
+          oldMixes.push({ num, name: extractMixName(unpacked) });
+          break;
+        case 0x06: // User Effects
+          effects.push({ num });
+          break;
+        case 0x0A: // Global Data
+          global = unpacked;
+          break;
+        default:
+          console.warn(`Unknown QS opcode 0x${opcode.toString(16).padStart(2, '0')}`);
+      }
+    } catch (err) {
+      console.warn('SysEx parse error:', err.message);
+    }
+  }
+
+  return { programs, newMixes, oldMixes, effects, global };
+}
+
+function renderSyxViewer(parsed, filename) {
+  const mixes = parsed.newMixes.length > 0 ? parsed.newMixes : parsed.oldMixes;
+  const mixLabel = parsed.newMixes.length > 0 ? 'new mixes' : (parsed.oldMixes.length > 0 ? 'old mixes' : 'mixes');
+  const counts = [];
+  if (parsed.programs.length) counts.push(`${parsed.programs.length} programs`);
+  if (mixes.length) counts.push(`${mixes.length} ${mixLabel}`);
+  if (parsed.effects.length) counts.push(`${parsed.effects.length} effects`);
+  if (parsed.global) counts.push('1 global');
+
+  let html = `<p class="syx-summary"><strong>${escapeHTML(filename)}</strong><br>${counts.join(', ') || 'No recognized data'}</p>`;
+
+  // Build tabs
+  const tabs = [];
+  if (parsed.programs.length) tabs.push({ id: 'programs', label: 'Programs' });
+  if (mixes.length) tabs.push({ id: 'mixes', label: 'Mixes' });
+  if (parsed.effects.length) tabs.push({ id: 'effects', label: 'Effects' });
+  if (parsed.global) tabs.push({ id: 'global', label: 'Global' });
+
+  if (tabs.length > 0) {
+    html += '<div class="prog-info-tabs">';
+    for (let t = 0; t < tabs.length; t++) {
+      const active = t === 0 ? ' active' : '';
+      html += `<button class="prog-info-tab${active}" data-tab="${tabs[t].id}">${tabs[t].label}</button>`;
+    }
+    html += '</div>';
+
+    for (let t = 0; t < tabs.length; t++) {
+      const active = t === 0 ? ' active' : '';
+      html += `<div class="prog-info-panel${active}" data-panel="${tabs[t].id}">`;
+
+      if (tabs[t].id === 'programs') {
+        html += '<table class="globals-table"><thead><tr><th>#</th><th>Name</th></tr></thead><tbody>';
+        for (const p of parsed.programs) {
+          html += `<tr><td>${String(p.num).padStart(3, '0')}</td><td>${escapeHTML(p.name)}</td></tr>`;
+        }
+        html += '</tbody></table>';
+      } else if (tabs[t].id === 'mixes') {
+        html += '<table class="globals-table"><thead><tr><th>#</th><th>Name</th></tr></thead><tbody>';
+        for (const m of mixes) {
+          html += `<tr><td>${String(m.num).padStart(3, '0')}</td><td>${escapeHTML(m.name)}</td></tr>`;
+        }
+        html += '</tbody></table>';
+      } else if (tabs[t].id === 'effects') {
+        html += '<table class="globals-table"><thead><tr><th>#</th></tr></thead><tbody>';
+        for (const e of parsed.effects) {
+          html += `<tr><td>${String(e.num).padStart(3, '0')}</td></tr>`;
+        }
+        html += '</tbody></table>';
+      } else if (tabs[t].id === 'global') {
+        html += '<table class="globals-table"><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>';
+        for (const def of GLOBAL_PARAMS) {
+          const raw = parsed.global[def.byte];
+          const val = def.signed ? parseSignedByte(raw) : raw;
+          html += `<tr><td>${escapeHTML(def.name)}</td><td>${escapeHTML(def.format(val))}</td></tr>`;
+        }
+        html += '</tbody></table>';
+      }
+
+      html += '</div>';
+    }
+  }
+
+  syxViewerBody.innerHTML = html;
+
+  // Wire up tab switching
+  syxViewerBody.querySelectorAll('.prog-info-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      syxViewerBody.querySelector('.prog-info-tab.active')?.classList.remove('active');
+      syxViewerBody.querySelector('.prog-info-panel.active')?.classList.remove('active');
+      tab.classList.add('active');
+      syxViewerBody.querySelector(`.prog-info-panel[data-panel="${tab.dataset.tab}"]`)?.classList.add('active');
+    });
+  });
+}
+
+function closeSyxViewer() {
+  syxViewerModal.classList.add('hidden');
+}
+
+syxOpenBtn.addEventListener('click', () => {
+  syxFileInput.click();
+});
+
+syxFileInput.addEventListener('change', () => {
+  const file = syxFileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const parsed = parseSyxFile(reader.result);
+    renderSyxViewer(parsed, file.name);
+    syxViewerModal.classList.remove('hidden');
+  };
+  reader.readAsArrayBuffer(file);
+  syxFileInput.value = '';
+});
+
+syxViewerClose.addEventListener('click', closeSyxViewer);
+syxViewerModal.addEventListener('click', (e) => {
+  if (e.target === syxViewerModal) closeSyxViewer();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !syxViewerModal.classList.contains('hidden')) {
+    closeSyxViewer();
   }
 });
 

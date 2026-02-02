@@ -39,6 +39,26 @@ function setupDOM() {
         <div id="prog-info-body" class="globals-body"></div>
       </div>
     </div>
+    <div id="mix-info-modal" class="search-modal hidden">
+      <div class="search-modal-content prog-info-content">
+        <div class="globals-modal-header">
+          <span class="globals-title">Mix Parameters</span>
+          <button id="mix-info-close" class="icon-btn">&times;</button>
+        </div>
+        <div id="mix-info-body" class="globals-body"></div>
+      </div>
+    </div>
+    <button id="syx-open-btn" class="icon-btn" title="Open SysEx File">F</button>
+    <input type="file" id="syx-file-input" accept=".syx" class="hidden">
+    <div id="syx-viewer-modal" class="search-modal hidden">
+      <div class="search-modal-content prog-info-content">
+        <div class="globals-modal-header">
+          <span class="globals-title">SysEx File Contents</span>
+          <button id="syx-viewer-close" class="icon-btn">&times;</button>
+        </div>
+        <div id="syx-viewer-body" class="globals-body"></div>
+      </div>
+    </div>
     <button id="globals-btn" class="icon-btn" disabled>G</button>
     <div id="globals-modal" class="search-modal hidden">
       <div class="search-modal-content">
