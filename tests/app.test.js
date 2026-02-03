@@ -11,26 +11,38 @@ function setupDOM() {
   document.body.innerHTML = `
     <div class="lcd" id="status">
       <div class="lcd-line1" id="lcd-line1">Ready</div>
-      <div class="lcd-line2" id="lcd-line2"></div>
+      <div class="lcd-line2 hidden" id="lcd-line2">
+        <select id="mode-select" class="lcd-mode-select" disabled>
+          <option value="prog">PROG</option>
+          <option value="mix">MIX</option>
+        </select>
+        <select id="lcd-bank" class="lcd-bank-select" disabled>
+          <option value="0">User</option>
+          <option value="1">Preset 1</option>
+          <option value="2">Preset 2</option>
+          <option value="3">Preset 3</option>
+          <option value="4">GenMIDI</option>
+        </select>
+        <input type="number" id="lcd-patch" class="lcd-patch-input" min="0" max="127" value="0" disabled>
+        <span class="lcd-col-name" id="lcd-name"></span>
+      </div>
+    <button id="midi-btn" class="icon-btn" title="MIDI Device">M</button>
+    <div id="midi-modal" class="search-modal hidden">
+      <div class="search-modal-content">
+        <div class="globals-modal-header">
+          <span class="globals-title">MIDI Device</span>
+          <button id="midi-close" class="icon-btn" title="Close">&times;</button>
+        </div>
+        <div class="midi-body">
+          <label for="device-select">MIDI Device</label>
+          <select id="device-select"><option disabled selected>No devices</option></select>
+          <div class="midi-actions">
+            <button id="identify-btn" disabled>Identify</button>
+            <button id="rescan-btn">Rescan</button>
+          </div>
+        </div>
+      </div>
     </div>
-    <button id="prog-btn" disabled>PROG</button>
-    <button id="mix-btn" disabled>MIX</button>
-    <select id="bank-select" disabled>
-      <option value="0">User</option>
-      <option value="1">Preset 1</option>
-      <option value="2">Preset 2</option>
-      <option value="3">Preset 3</option>
-      <option value="4">GenMIDI</option>
-    </select>
-    <label id="patch-label">Program</label>
-    <span class="patch-display" id="patch-display">000</span>
-    <button id="patch-prev" disabled></button>
-    <button id="patch-next" disabled></button>
-    <button id="rescan-btn">Rescan</button>
-    <button id="advanced-btn">Advanced</button>
-    <div id="advanced-panel" class="hidden"></div>
-    <select id="device-select"><option disabled selected>No devices</option></select>
-    <button id="identify-btn" disabled>Identify Device</button>
     <button id="prog-info-btn" class="icon-btn prog-info-btn hidden" title="Program Info">i</button>
     <div id="prog-info-modal" class="search-modal hidden">
       <div class="search-modal-content prog-info-content">
@@ -73,7 +85,6 @@ function setupDOM() {
         <div id="globals-body" class="globals-body"></div>
       </div>
     </div>
-    <button id="search-btn" disabled>Search</button>
     <div id="search-modal" class="search-modal hidden">
       <div class="search-modal-content">
         <input type="text" id="search-input" placeholder="Search patches..." autocomplete="off">
@@ -203,6 +214,28 @@ async function loadApp() {
   return mod;
 }
 
+function switchMode(mode) {
+  const sel = document.getElementById('mode-select');
+  sel.value = mode;
+  sel.dispatchEvent(new Event('change'));
+}
+
+function setPatch(value) {
+  const input = document.getElementById('lcd-patch');
+  input.value = value;
+  input.dispatchEvent(new Event('change'));
+}
+
+function setBank(value) {
+  const sel = document.getElementById('lcd-bank');
+  sel.value = String(value);
+  sel.dispatchEvent(new Event('change'));
+}
+
+function openSearch() {
+  document.getElementById('lcd-name').click();
+}
+
 // --- Initialization ---
 
 describe('initialization', () => {
@@ -213,17 +246,14 @@ describe('initialization', () => {
     expect(lcd1.textContent).toContain('QSR');
   });
 
-  test('enables mode buttons after connecting', async () => {
+  test('enables mode select after connecting', async () => {
     await loadApp();
-    expect(document.getElementById('prog-btn').disabled).toBe(false);
-    expect(document.getElementById('mix-btn').disabled).toBe(false);
+    expect(document.getElementById('mode-select').disabled).toBe(false);
   });
 
   test('starts in Program mode', async () => {
     await loadApp();
-    expect(document.getElementById('prog-btn').classList.contains('active')).toBe(true);
-    expect(document.getElementById('mix-btn').classList.contains('active')).toBe(false);
-    expect(document.getElementById('patch-label').textContent).toBe('Program');
+    expect(document.getElementById('mode-select').value).toBe('prog');
   });
 
   test('populates device select dropdown', async () => {
@@ -283,20 +313,18 @@ describe('initialization', () => {
 // --- Mode Switching ---
 
 describe('mode switching', () => {
-  test('clicking MIX switches to mix mode', async () => {
+  test('selecting MIX switches to mix mode', async () => {
     await loadApp();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
 
-    expect(document.getElementById('mix-btn').classList.contains('active')).toBe(true);
-    expect(document.getElementById('prog-btn').classList.contains('active')).toBe(false);
-    expect(document.getElementById('patch-label').textContent).toBe('Mix');
+    expect(document.getElementById('mode-select').value).toBe('mix');
   });
 
   test('sends MIDI Program Select = Channel 1 when switching to mix mode', async () => {
     await loadApp();
     qsrOutput.send.mockClear();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
 
     const calls = qsrOutput.send.mock.calls;
@@ -310,11 +338,11 @@ describe('mode switching', () => {
 
   test('sends MIDI Program Select = On when switching back to prog mode', async () => {
     await loadApp();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
     qsrOutput.send.mockClear();
 
-    document.getElementById('prog-btn').click();
+    switchMode('prog');
     await jest.advanceTimersByTimeAsync(100);
 
     const calls = qsrOutput.send.mock.calls;
@@ -327,22 +355,22 @@ describe('mode switching', () => {
 
   test('resets patch to 0 on mode switch', async () => {
     await loadApp();
-    document.getElementById('patch-next').click();
+    setPatch(1);
     await jest.advanceTimersByTimeAsync(100);
 
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
 
-    expect(document.getElementById('patch-display').textContent).toBe('000');
+    expect(document.getElementById('lcd-patch').value).toBe('0');
   });
 
-  test('mode buttons ignored when no active device', async () => {
+  test('mode select ignored when no active device', async () => {
     mockAccess = new MockMIDIAccess();
     setMockMIDIAccess(mockAccess);
     await loadApp();
     // Should not throw
-    document.getElementById('prog-btn').click();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
+    switchMode('prog');
   });
 });
 
@@ -353,9 +381,7 @@ describe('bank selection', () => {
     await loadApp();
     qsrOutput.send.mockClear();
 
-    const bankSelect = document.getElementById('bank-select');
-    bankSelect.value = '2';
-    bankSelect.dispatchEvent(new Event('change'));
+    setBank(2);
     await jest.advanceTimersByTimeAsync(100);
 
     const calls = qsrOutput.send.mock.calls;
@@ -383,15 +409,13 @@ describe('bank selection', () => {
 
   test('changing bank resets patch to 0', async () => {
     await loadApp();
-    document.getElementById('patch-next').click();
+    setPatch(1);
     await jest.advanceTimersByTimeAsync(100);
 
-    const bankSelect = document.getElementById('bank-select');
-    bankSelect.value = '1';
-    bankSelect.dispatchEvent(new Event('change'));
+    setBank(1);
     await jest.advanceTimersByTimeAsync(100);
 
-    expect(document.getElementById('patch-display').textContent).toBe('000');
+    expect(document.getElementById('lcd-patch').value).toBe('0');
   });
 
   test('bank select ignored when no active device', async () => {
@@ -399,78 +423,70 @@ describe('bank selection', () => {
     setMockMIDIAccess(mockAccess);
     await loadApp();
 
-    const bankSelect = document.getElementById('bank-select');
-    bankSelect.value = '2';
-    bankSelect.dispatchEvent(new Event('change'));
+    setBank(2);
   });
 });
 
 // --- Patch Navigation ---
 
 describe('patch navigation', () => {
-  test('next button increments patch', async () => {
+  test('setting patch value changes patch', async () => {
     await loadApp();
-    document.getElementById('patch-next').click();
+    setPatch(1);
     await jest.advanceTimersByTimeAsync(100);
-    expect(document.getElementById('patch-display').textContent).toBe('001');
+    expect(document.getElementById('lcd-patch').value).toBe('1');
   });
 
-  test('prev button decrements patch', async () => {
+  test('setting patch value updates display', async () => {
     await loadApp();
-    document.getElementById('patch-next').click();
-    document.getElementById('patch-next').click();
+    setPatch(2);
     await jest.advanceTimersByTimeAsync(100);
 
-    document.getElementById('patch-prev').click();
+    setPatch(1);
     await jest.advanceTimersByTimeAsync(100);
-    expect(document.getElementById('patch-display').textContent).toBe('001');
+    expect(document.getElementById('lcd-patch').value).toBe('1');
   });
 
-  test('wraps from 127 to 0 in prog mode', async () => {
+  test('wraps from 128 to 0 in prog mode', async () => {
     await loadApp();
-    // Click next 128 times to go from 0 to 127, then wrap to 0
-    for (let i = 0; i < 128; i++) {
-      document.getElementById('patch-next').click();
-    }
+    setPatch(128);
     await jest.advanceTimersByTimeAsync(100);
-    expect(document.getElementById('patch-display').textContent).toBe('000');
+    expect(document.getElementById('lcd-patch').value).toBe('0');
   });
 
-  test('wraps from 0 to 127 going backwards in prog mode', async () => {
+  test('wraps from -1 to 127 going backwards in prog mode', async () => {
     await loadApp();
-    document.getElementById('patch-prev').click();
+    setPatch(-1);
     await jest.advanceTimersByTimeAsync(100);
-    expect(document.getElementById('patch-display').textContent).toBe('127');
+    expect(document.getElementById('lcd-patch').value).toBe('127');
   });
 
-  test('wraps from 0 to 99 going backwards in mix mode', async () => {
+  test('wraps from -1 to 99 going backwards in mix mode', async () => {
     await loadApp();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
 
-    document.getElementById('patch-prev').click();
+    setPatch(-1);
     await jest.advanceTimersByTimeAsync(100);
-    expect(document.getElementById('patch-display').textContent).toBe('099');
+    expect(document.getElementById('lcd-patch').value).toBe('99');
   });
 
-  test('wraps from 99 to 0 in mix mode', async () => {
+  test('wraps from 100 to 0 in mix mode', async () => {
     await loadApp();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
 
-    for (let i = 0; i < 100; i++) {
-      document.getElementById('patch-next').click();
-    }
+    setPatch(100);
     await jest.advanceTimersByTimeAsync(100);
-    expect(document.getElementById('patch-display').textContent).toBe('000');
+    expect(document.getElementById('lcd-patch').value).toBe('0');
   });
 
-  test('patch buttons ignored when no active device', async () => {
+  test('patch input ignored when no active device', async () => {
     mockAccess = new MockMIDIAccess();
     setMockMIDIAccess(mockAccess);
     await loadApp();
-    document.getElementById('patch-next').click();
-    document.getElementById('patch-prev').click();
+    setPatch(1);
+    setPatch(-1);
   });
 });
 
@@ -494,19 +510,19 @@ describe('rescan', () => {
   });
 });
 
-// --- Advanced Panel ---
+// --- MIDI Modal ---
 
-describe('advanced panel', () => {
-  test('toggle advanced panel visibility', async () => {
+describe('midi modal', () => {
+  test('midi button opens and close button closes modal', async () => {
     await loadApp();
-    const panel = document.getElementById('advanced-panel');
-    expect(panel.classList.contains('hidden')).toBe(true);
+    const modal = document.getElementById('midi-modal');
+    expect(modal.classList.contains('hidden')).toBe(true);
 
-    document.getElementById('advanced-btn').click();
-    expect(panel.classList.contains('hidden')).toBe(false);
+    document.getElementById('midi-btn').click();
+    expect(modal.classList.contains('hidden')).toBe(false);
 
-    document.getElementById('advanced-btn').click();
-    expect(panel.classList.contains('hidden')).toBe(true);
+    document.getElementById('midi-close').click();
+    expect(modal.classList.contains('hidden')).toBe(true);
   });
 });
 
@@ -565,7 +581,7 @@ describe('identify button', () => {
 describe('LCD display', () => {
   test('shows MIX mode in LCD after mode switch', async () => {
     await loadApp();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
     const lcd2 = document.getElementById('lcd-line2');
     expect(lcd2.innerHTML).toContain('MIX');
@@ -579,10 +595,9 @@ describe('LCD display', () => {
 
   test('shows patch number in LCD', async () => {
     await loadApp();
-    document.getElementById('patch-next').click();
+    setPatch(1);
     await jest.advanceTimersByTimeAsync(3000);
-    const lcd2 = document.getElementById('lcd-line2');
-    expect(lcd2.innerHTML).toContain('001');
+    expect(document.getElementById('lcd-patch').value).toBe('1');
   });
 });
 
@@ -592,54 +607,42 @@ describe('preset name lookup', () => {
   test('shows preset name when switching to bank 1 in prog mode', async () => {
     await loadApp();
 
-    const bankSel = document.getElementById('bank-select');
-    bankSel.value = '1';
-    bankSel.dispatchEvent(new Event('change'));
+    setBank(1);
     await jest.advanceTimersByTimeAsync(100);
 
-    const lcd2 = document.getElementById('lcd-line2');
-    expect(lcd2.innerHTML).toContain('TrueStereo');
+    expect(document.getElementById('lcd-name').textContent).toContain('TrueStereo');
   });
 
   test('shows preset name when switching to bank 4 (GM) in prog mode', async () => {
     await loadApp();
 
-    const bankSel = document.getElementById('bank-select');
-    bankSel.value = '4';
-    bankSel.dispatchEvent(new Event('change'));
+    setBank(4);
     await jest.advanceTimersByTimeAsync(100);
 
-    const lcd2 = document.getElementById('lcd-line2');
-    expect(lcd2.innerHTML).toContain('AcGrandPno');
+    expect(document.getElementById('lcd-name').textContent).toContain('AcGrandPno');
   });
 
   test('shows preset mix name when in mix mode bank 1', async () => {
     await loadApp();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
 
-    const bankSel = document.getElementById('bank-select');
-    bankSel.value = '1';
-    bankSel.dispatchEvent(new Event('change'));
+    setBank(1);
     await jest.advanceTimersByTimeAsync(100);
 
-    const lcd2 = document.getElementById('lcd-line2');
-    expect(lcd2.innerHTML).toContain('Zen Piano');
+    expect(document.getElementById('lcd-name').textContent).toContain('Zen Piano');
   });
 
   test('navigating patches updates preset name', async () => {
     await loadApp();
 
-    const bankSel = document.getElementById('bank-select');
-    bankSel.value = '1';
-    bankSel.dispatchEvent(new Event('change'));
+    setBank(1);
     await jest.advanceTimersByTimeAsync(100);
 
-    document.getElementById('patch-next').click();
+    setPatch(1);
     await jest.advanceTimersByTimeAsync(100);
 
-    const lcd2 = document.getElementById('lcd-line2');
-    expect(lcd2.innerHTML).toContain('Titanium88');
+    expect(document.getElementById('lcd-name').textContent).toContain('Titanium88');
   });
 
   test('does not show preset name for User bank (0)', async () => {
@@ -676,17 +679,16 @@ describe('stale fetch guard', () => {
 
     await loadApp();
 
-    // First click: starts fetch for patch 1
-    document.getElementById('patch-next').click();
-    // Immediately click again before patch 1 reply arrives: starts fetch for patch 2
-    document.getElementById('patch-next').click();
+    // First change: starts fetch for patch 1
+    setPatch(1);
+    // Immediately change again before patch 1 reply arrives: starts fetch for patch 2
+    setPatch(2);
 
     // Advance past the delayed replies
     await jest.advanceTimersByTimeAsync(500);
 
     // Patch 1's reply should be discarded (stale), patch 2's name should show
-    const lcd2 = document.getElementById('lcd-line2');
-    expect(document.getElementById('patch-display').textContent).toBe('002');
+    expect(document.getElementById('lcd-patch').value).toBe('2');
   });
 });
 
@@ -699,10 +701,9 @@ describe('localStorage persistence', () => {
     }));
     await loadApp();
 
-    expect(document.getElementById('mix-btn').classList.contains('active')).toBe(true);
-    expect(document.getElementById('bank-select').value).toBe('2');
-    expect(document.getElementById('patch-display').textContent).toBe('042');
-    expect(document.getElementById('patch-label').textContent).toBe('Mix');
+    expect(document.getElementById('mode-select').value).toBe('mix');
+    expect(document.getElementById('lcd-bank').value).toBe('2');
+    expect(document.getElementById('lcd-patch').value).toBe('42');
   });
 
   test('sends correct MIDI messages for restored mix mode state', async () => {
@@ -729,30 +730,28 @@ describe('localStorage persistence', () => {
 
   test('defaults to prog/0/0 with no saved state', async () => {
     await loadApp();
-    expect(document.getElementById('prog-btn').classList.contains('active')).toBe(true);
-    expect(document.getElementById('bank-select').value).toBe('0');
-    expect(document.getElementById('patch-display').textContent).toBe('000');
+    expect(document.getElementById('mode-select').value).toBe('prog');
+    expect(document.getElementById('lcd-bank').value).toBe('0');
+    expect(document.getElementById('lcd-patch').value).toBe('0');
   });
 
   test('ignores corrupt localStorage data', async () => {
     localStorage.setItem('qsr-control-state', '{bad json!!!');
     await loadApp();
     // Should fall back to defaults
-    expect(document.getElementById('prog-btn').classList.contains('active')).toBe(true);
-    expect(document.getElementById('patch-display').textContent).toBe('000');
+    expect(document.getElementById('mode-select').value).toBe('prog');
+    expect(document.getElementById('lcd-patch').value).toBe('0');
   });
 
   test('ignores invalid state shape', async () => {
     localStorage.setItem('qsr-control-state', JSON.stringify({ mode: 'bad', bank: 'x' }));
     await loadApp();
-    expect(document.getElementById('prog-btn').classList.contains('active')).toBe(true);
+    expect(document.getElementById('mode-select').value).toBe('prog');
   });
 
   test('saves state after bank change', async () => {
     await loadApp();
-    const bankSel = document.getElementById('bank-select');
-    bankSel.value = '3';
-    bankSel.dispatchEvent(new Event('change'));
+    setBank(3);
     await jest.advanceTimersByTimeAsync(100);
 
     const saved = JSON.parse(localStorage.getItem('qsr-control-state'));
@@ -761,7 +760,7 @@ describe('localStorage persistence', () => {
 
   test('saves state after patch change', async () => {
     await loadApp();
-    document.getElementById('patch-next').click();
+    setPatch(1);
     await jest.advanceTimersByTimeAsync(100);
 
     const saved = JSON.parse(localStorage.getItem('qsr-control-state'));
@@ -770,7 +769,7 @@ describe('localStorage persistence', () => {
 
   test('saves state after mode switch', async () => {
     await loadApp();
-    document.getElementById('mix-btn').click();
+    switchMode('mix');
     await jest.advanceTimersByTimeAsync(100);
 
     const saved = JSON.parse(localStorage.getItem('qsr-control-state'));
@@ -781,12 +780,12 @@ describe('localStorage persistence', () => {
 // --- Search ---
 
 describe('search', () => {
-  test('search button opens modal and shows results', async () => {
+  test('clicking patch name opens modal and shows results', async () => {
     await loadApp();
     const modal = document.getElementById('search-modal');
     expect(modal.classList.contains('hidden')).toBe(true);
 
-    document.getElementById('search-btn').click();
+    openSearch();
     expect(modal.classList.contains('hidden')).toBe(false);
 
     // Should show all presets (grouped) when input is empty
@@ -798,7 +797,7 @@ describe('search', () => {
 
   test('typing filters results', async () => {
     await loadApp();
-    document.getElementById('search-btn').click();
+    openSearch();
 
     const input = document.getElementById('search-input');
     input.value = 'TrueStereo';
@@ -811,7 +810,7 @@ describe('search', () => {
 
   test('filter checkboxes limit by mode', async () => {
     await loadApp();
-    document.getElementById('search-btn').click();
+    openSearch();
 
     // Uncheck mixes
     const filterMix = document.getElementById('filter-mix');
@@ -825,7 +824,7 @@ describe('search', () => {
 
   test('clicking a result selects it and closes modal', async () => {
     await loadApp();
-    document.getElementById('search-btn').click();
+    openSearch();
 
     const input = document.getElementById('search-input');
     input.value = 'Titanium88';
@@ -837,13 +836,13 @@ describe('search', () => {
 
     const modal = document.getElementById('search-modal');
     expect(modal.classList.contains('hidden')).toBe(true);
-    expect(document.getElementById('patch-display').textContent).toBe('001');
-    expect(document.getElementById('bank-select').value).toBe('1');
+    expect(document.getElementById('lcd-patch').value).toBe('1');
+    expect(document.getElementById('lcd-bank').value).toBe('1');
   });
 
   test('selecting a mix result switches mode', async () => {
     await loadApp();
-    document.getElementById('search-btn').click();
+    openSearch();
 
     const input = document.getElementById('search-input');
     input.value = 'Zen Piano';
@@ -853,13 +852,12 @@ describe('search', () => {
     items[0].click();
     await jest.advanceTimersByTimeAsync(100);
 
-    expect(document.getElementById('mix-btn').classList.contains('active')).toBe(true);
-    expect(document.getElementById('patch-label').textContent).toBe('Mix');
+    expect(document.getElementById('mode-select').value).toBe('mix');
   });
 
   test('Escape closes search modal', async () => {
     await loadApp();
-    document.getElementById('search-btn').click();
+    openSearch();
 
     const input = document.getElementById('search-input');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
@@ -869,7 +867,7 @@ describe('search', () => {
 
   test('clicking backdrop closes search modal', async () => {
     await loadApp();
-    document.getElementById('search-btn').click();
+    openSearch();
 
     const modal = document.getElementById('search-modal');
     modal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -879,7 +877,7 @@ describe('search', () => {
 
   test('arrow keys navigate results and Enter selects', async () => {
     await loadApp();
-    document.getElementById('search-btn').click();
+    openSearch();
 
     const input = document.getElementById('search-input');
     input.value = 'TrueStereo';
@@ -907,11 +905,12 @@ describe('search', () => {
     expect(document.getElementById('search-modal').classList.contains('hidden')).toBe(true);
   });
 
-  test('search button disabled when no device', async () => {
+  test('clicking patch name does nothing when no device', async () => {
     mockAccess = new MockMIDIAccess();
     setMockMIDIAccess(mockAccess);
     await loadApp();
-    expect(document.getElementById('search-btn').disabled).toBe(true);
+    openSearch();
+    expect(document.getElementById('search-modal').classList.contains('hidden')).toBe(true);
   });
 });
 
@@ -1206,7 +1205,7 @@ describe('user bank names', () => {
     await loadApp();
 
     // Verify it was loaded (search should include user bank entries)
-    document.getElementById('search-btn').click();
+    openSearch();
     const input = document.getElementById('search-input');
     input.value = 'Prog 42';
     input.dispatchEvent(new Event('input'));
@@ -1227,7 +1226,7 @@ describe('user bank names', () => {
     }
     await loadApp();
 
-    document.getElementById('search-btn').click();
+    openSearch();
     const input = document.getElementById('search-input');
     input.value = 'MyMix5';
     input.dispatchEvent(new Event('input'));
@@ -1248,7 +1247,7 @@ describe('user bank names', () => {
     await putProgram(5, makeMinimalProgram('TestProg'));
     await loadApp();
 
-    document.getElementById('search-btn').click();
+    openSearch();
     const input = document.getElementById('search-input');
     input.value = 'TestProg';
     input.dispatchEvent(new Event('input'));

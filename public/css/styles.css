@@ -242,26 +242,135 @@ body {
   gap: 0;
 }
 
-.lcd-line2:empty {
+.lcd-line2.hidden {
   display: none;
 }
 
-.lcd-col-mode {
+.lcd-mode-select {
   width: 4ch;
   flex-shrink: 0;
   margin-right: 1ch;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 0;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  text-shadow: inherit;
+  line-height: inherit;
 }
 
-.lcd-col-bank {
+.lcd-mode-select:hover:not(:disabled) {
+  border-color: var(--lcd-text);
+  background: rgba(164, 213, 78, 0.1);
+}
+
+.lcd-mode-select:focus:not(:disabled) {
+  border-color: var(--lcd-text);
+}
+
+.lcd-mode-select:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.lcd-mode-select option {
+  background: var(--panel);
+  color: var(--text);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.9rem;
+}
+
+.lcd-bank-select {
   width: 10ch;
   flex-shrink: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 0;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  text-shadow: inherit;
+  line-height: inherit;
 }
 
-.lcd-col-patch {
-  width: 3ch;
+.lcd-bank-select:hover:not(:disabled) {
+  border-color: var(--lcd-text);
+  background: rgba(164, 213, 78, 0.1);
+}
+
+.lcd-bank-select:focus:not(:disabled) {
+  border-color: var(--lcd-text);
+}
+
+.lcd-bank-select:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.lcd-bank-select option {
+  background: var(--panel);
+  color: var(--text);
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.9rem;
+}
+
+.lcd-patch-input {
+  width: 4.5ch;
   flex-shrink: 0;
   text-align: right;
   margin-right: 1ch;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 0;
+  outline: none;
+  cursor: pointer;
+  text-shadow: inherit;
+  line-height: inherit;
+}
+
+.lcd-patch-input:hover:not(:disabled) {
+  border-color: var(--lcd-text);
+  background: rgba(164, 213, 78, 0.1);
+}
+
+.lcd-patch-input:focus:not(:disabled) {
+  border-color: var(--lcd-text);
+  cursor: text;
+}
+
+.lcd-patch-input:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.lcd-patch-input::-webkit-inner-spin-button,
+.lcd-patch-input::-webkit-outer-spin-button {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.lcd-patch-input:hover:not(:disabled)::-webkit-inner-spin-button,
+.lcd-patch-input:focus:not(:disabled)::-webkit-inner-spin-button {
+  opacity: 1;
+  width: auto;
+  height: auto;
+  filter: invert(1) hue-rotate(50deg) brightness(1.5);
 }
 
 .lcd-col-name {
@@ -270,6 +379,17 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lcd-col-name.clickable {
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 2px;
+}
+
+.lcd-col-name.clickable:hover {
+  border-color: var(--lcd-text);
+  background: rgba(164, 213, 78, 0.1);
 }
 
 .lcd.error {
@@ -398,99 +518,19 @@ body {
   padding-top: 0.4rem;
 }
 
-/* --- Mode buttons --- */
-
-.mode-row {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
-}
-
-.mode-btn {
-  flex: 1;
-}
-
-.mode-btn.active {
-  background: var(--accent);
-  color: var(--panel);
-  border-color: var(--accent);
-}
-
-.mode-btn.active:hover {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-/* --- Bank / Patch selector --- */
-
-.bank-patch-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  margin-bottom: 1.25rem;
-}
-
-.bank-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.patch-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.patch-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.patch-nav button {
-  width: 2.5rem;
-  font-size: 1.2rem;
-  line-height: 1;
-  padding: 0.4rem 0;
-  text-align: center;
-}
-
-.patch-display {
-  flex: 1;
-  text-align: center;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 1.1rem;
-  background: var(--lcd-bg);
-  color: var(--lcd-text);
-  padding: 0.45rem 0.5rem;
-  border-radius: 3px;
-  border: 1px solid #0f1a08;
-  text-shadow: 0 0 6px var(--lcd-glow);
-}
-
-/* --- Controls --- */
-
-.controls {
+.midi-body {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
 }
 
-.button-row {
+.midi-actions {
   display: flex;
   gap: 0.5rem;
 }
 
-.button-row button {
+.midi-actions button {
   flex: 1;
-}
-
-.advanced-panel {
-  margin-top: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
 }
 
 .hidden {
@@ -556,16 +596,6 @@ button:active:not(:disabled) {
 button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-/* --- Search button --- */
-
-.search-row {
-  display: flex;
-}
-
-#search-btn {
-  width: 100%;
 }
 
 /* --- Search modal --- */
@@ -686,21 +716,6 @@ button:disabled {
     max-width: 700px;
   }
 
-  /* Combine mode + bank + patch into a horizontal strip */
-  .mode-row {
-    margin-bottom: 0.6rem;
-  }
-
-  .bank-patch-panel {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.6rem;
-  }
-
-  .search-row {
-    grid-column: 1 / -1;
-  }
-
   .search-modal-content {
     max-width: 560px;
   }
@@ -722,18 +737,6 @@ button:disabled {
 @media (min-width: 900px) {
   .rack-panel {
     max-width: 840px;
-  }
-
-  .bank-patch-panel {
-    grid-template-columns: auto 1fr 1fr;
-  }
-
-  .search-row {
-    grid-column: auto;
-  }
-
-  #search-btn {
-    height: 100%;
   }
 
   .search-modal-content {

@@ -10,16 +10,13 @@ const statusArea = document.getElementById('status');
 const lcdLine1 = document.getElementById('lcd-line1');
 const lcdLine2 = document.getElementById('lcd-line2');
 const rescanBtn = document.getElementById('rescan-btn');
-const advancedBtn = document.getElementById('advanced-btn');
-const advancedPanel = document.getElementById('advanced-panel');
-const progBtn = document.getElementById('prog-btn');
-const mixBtn = document.getElementById('mix-btn');
-const bankSelect = document.getElementById('bank-select');
-const patchLabel = document.getElementById('patch-label');
-const patchDisplay = document.getElementById('patch-display');
-const patchPrev = document.getElementById('patch-prev');
-const patchNext = document.getElementById('patch-next');
-const searchBtn = document.getElementById('search-btn');
+const midiBtn = document.getElementById('midi-btn');
+const midiModal = document.getElementById('midi-modal');
+const midiClose = document.getElementById('midi-close');
+const modeSelect = document.getElementById('mode-select');
+const lcdBankSelect = document.getElementById('lcd-bank');
+const lcdPatchInput = document.getElementById('lcd-patch');
+const lcdName = document.getElementById('lcd-name');
 const searchModal = document.getElementById('search-modal');
 const searchInput = document.getElementById('search-input');
 const searchResults = document.getElementById('search-results');
@@ -148,22 +145,20 @@ function loadState() {
 
 function setStatus(message, type = 'info') {
   lcdLine1.textContent = message;
-  lcdLine2.innerHTML = '';
+  lcdLine2.classList.add('hidden');
   statusArea.className = `lcd ${type}`;
 }
 
 function updateLCD() {
   const id = activeDevice.identity;
   lcdLine1.textContent = `${id.manufacturer} ${id.model} — fw ${id.softwareVersion}`;
-  const modeName = currentMode === 'prog' ? 'PROG' : 'MIX';
-  const bankNames = ['User', 'Preset 1', 'Preset 2', 'Preset 3', 'GenMIDI'];
-  const bankName = bankNames[currentBank] || `Bank ${currentBank}`;
-  const patchNum = String(currentPatch).padStart(3, '0');
-  lcdLine2.innerHTML =
-    `<span class="lcd-col-mode">${modeName}</span>` +
-    `<span class="lcd-col-bank">${bankName}</span>` +
-    `<span class="lcd-col-patch">${patchNum}</span>` +
-    `<span class="lcd-col-name">${currentPatchName}</span>`;
+  modeSelect.value = currentMode;
+  lcdBankSelect.value = currentBank;
+  lcdPatchInput.max = maxPatch();
+  lcdPatchInput.value = currentPatch;
+  lcdName.textContent = currentPatchName;
+  lcdName.classList.toggle('clickable', !!activeDevice);
+  lcdLine2.classList.remove('hidden');
   statusArea.className = 'lcd success';
 }
 
@@ -213,18 +208,13 @@ async function fetchPatchName() {
   }
 }
 
-function updateModeButtons() {
-  if (!activeDevice) {
-    progBtn.disabled = true;
-    mixBtn.disabled = true;
-    progBtn.classList.remove('active');
-    mixBtn.classList.remove('active');
-    return;
-  }
-  progBtn.disabled = false;
-  mixBtn.disabled = false;
-  progBtn.classList.toggle('active', currentMode === 'prog');
-  mixBtn.classList.toggle('active', currentMode === 'mix');
+function updateModeSelect() {
+  const connected = !!activeDevice;
+  modeSelect.disabled = !connected;
+  modeSelect.value = currentMode;
+  lcdBankSelect.disabled = !connected;
+  lcdPatchInput.disabled = !connected;
+  lcdName.classList.toggle('clickable', connected);
 }
 
 
@@ -239,15 +229,14 @@ function updateProgInfoVisibility() {
 
 function updateBankPatchUI() {
   const connected = activeDevice !== null;
-  bankSelect.disabled = !connected;
-  patchPrev.disabled = !connected;
-  patchNext.disabled = !connected;
-  searchBtn.disabled = !connected;
+  lcdBankSelect.disabled = !connected;
+  lcdPatchInput.disabled = !connected;
   globalsBtn.disabled = !connected;
   refreshBtn.disabled = !connected;
-  patchLabel.textContent = currentMode === 'prog' ? 'Program' : 'Mix';
-  bankSelect.value = currentBank;
-  patchDisplay.textContent = String(currentPatch).padStart(3, '0');
+  lcdBankSelect.value = currentBank;
+  lcdPatchInput.max = maxPatch();
+  lcdPatchInput.value = currentPatch;
+  lcdName.classList.toggle('clickable', connected);
   updateProgInfoVisibility();
 }
 
@@ -287,7 +276,7 @@ function activateMode(mode) {
   sendMidiProgramSelect(out, progSelect);
   currentMode = mode;
   currentPatch = 0;
-  updateModeButtons();
+  updateModeSelect();
   updateBankPatchUI();
   sendBankAndPatch();
   fetchPatchName();
@@ -305,7 +294,7 @@ function restoreOrDefaultState() {
   currentMode = mode;
   currentBank = saved ? saved.bank : 0;
   currentPatch = saved ? saved.patch : 0;
-  updateModeButtons();
+  updateModeSelect();
   updateBankPatchUI();
   sendBankAndPatch();
   fetchPatchName();
@@ -363,7 +352,7 @@ async function autoScan() {
     if (!(await hasData())) refreshUserBanks();
   } else {
     activeDevice = null;
-    updateModeButtons();
+    updateModeSelect();
     updateBankPatchUI();
     setStatus('No QS device found', 'error');
   }
@@ -410,25 +399,28 @@ async function init() {
   }
 }
 
-progBtn.addEventListener('click', () => {
-  if (activeDevice) activateMode('prog');
+modeSelect.addEventListener('change', () => {
+  if (activeDevice) activateMode(modeSelect.value);
 });
-mixBtn.addEventListener('click', () => {
-  if (activeDevice) activateMode('mix');
+lcdBankSelect.addEventListener('change', () => {
+  if (activeDevice) selectBank(Number(lcdBankSelect.value));
 });
-bankSelect.addEventListener('change', () => {
-  if (activeDevice) selectBank(Number(bankSelect.value));
+lcdPatchInput.addEventListener('change', () => {
+  if (activeDevice) selectPatch(Number(lcdPatchInput.value));
 });
-patchPrev.addEventListener('click', () => {
-  if (activeDevice) selectPatch(currentPatch - 1);
-});
-patchNext.addEventListener('click', () => {
-  if (activeDevice) selectPatch(currentPatch + 1);
+lcdName.addEventListener('click', () => {
+  if (activeDevice) openSearch();
 });
 rescanBtn.addEventListener('click', () => autoScan());
 refreshBtn.addEventListener('click', () => refreshUserBanks());
-advancedBtn.addEventListener('click', () => {
-  advancedPanel.classList.toggle('hidden');
+midiBtn.addEventListener('click', () => {
+  midiModal.classList.remove('hidden');
+});
+midiClose.addEventListener('click', () => {
+  midiModal.classList.add('hidden');
+});
+midiModal.addEventListener('click', (e) => {
+  if (e.target === midiModal) midiModal.classList.add('hidden');
 });
 identifyBtn.addEventListener('click', handleIdentify);
 
@@ -515,7 +507,6 @@ function updateSearchHighlight() {
   }
 }
 
-searchBtn.addEventListener('click', openSearch);
 
 function refreshSearch() {
   renderSearchResults(searchInput.value.trim());
@@ -672,6 +663,9 @@ globalsModal.addEventListener('click', (e) => {
   if (e.target === globalsModal) closeGlobals();
 });
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !midiModal.classList.contains('hidden')) {
+    midiModal.classList.add('hidden');
+  }
   if (e.key === 'Escape' && !globalsModal.classList.contains('hidden')) {
     closeGlobals();
   }

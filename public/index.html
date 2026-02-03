@@ -16,6 +16,16 @@
       <span class="brand">ALESIS</span>
       <span class="model">QSR Control</span>
       <div class="header-actions">
+        <button id="midi-btn" class="icon-btn" title="MIDI Device">
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
+            <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <circle cx="7" cy="8" r="1"/>
+            <circle cx="13" cy="8" r="1"/>
+            <circle cx="6" cy="12" r="1"/>
+            <circle cx="10" cy="13" r="1"/>
+            <circle cx="14" cy="12" r="1"/>
+          </svg>
+        </button>
         <button id="syx-open-btn" class="icon-btn" title="Open SysEx File">
           <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
             <path d="M4 4a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1H4V4z"/>
@@ -38,7 +48,21 @@
     </div>
     <div class="lcd" id="status" aria-live="polite">
       <div class="lcd-line1" id="lcd-line1">Ready</div>
-      <div class="lcd-line2" id="lcd-line2"></div>
+      <div class="lcd-line2 hidden" id="lcd-line2">
+        <select id="mode-select" class="lcd-mode-select" disabled>
+          <option value="prog">PROG</option>
+          <option value="mix">MIX</option>
+        </select>
+        <select id="lcd-bank" class="lcd-bank-select" disabled>
+          <option value="0">User</option>
+          <option value="1">Preset 1</option>
+          <option value="2">Preset 2</option>
+          <option value="3">Preset 3</option>
+          <option value="4">GenMIDI</option>
+        </select>
+        <input type="number" id="lcd-patch" class="lcd-patch-input" min="0" max="127" value="0" disabled>
+        <span class="lcd-col-name" id="lcd-name"></span>
+      </div>
       <button id="prog-info-btn" class="icon-btn prog-info-btn hidden" title="Program Info">
         <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor">
           <circle cx="10" cy="10" r="9" stroke="currentColor" stroke-width="1.5" fill="none"/>
@@ -46,44 +70,22 @@
         </svg>
       </button>
     </div>
-    <div class="mode-row" id="mode-row">
-      <button id="prog-btn" class="mode-btn active" disabled>PROG</button>
-      <button id="mix-btn" class="mode-btn" disabled>MIX</button>
-    </div>
-    <div class="bank-patch-panel" id="bank-patch-panel">
-      <div class="search-row">
-        <button id="search-btn" disabled>Search</button>
-      </div>
-      <div class="bank-row">
-        <label for="bank-select" id="bank-label">Bank</label>
-        <select id="bank-select" disabled>
-          <option value="0">User</option>
-          <option value="1">Preset 1</option>
-          <option value="2">Preset 2</option>
-          <option value="3">Preset 3</option>
-          <option value="4">GenMIDI</option>
-        </select>
-      </div>
-      <div class="patch-row">
-        <label id="patch-label">Program</label>
-        <div class="patch-nav">
-          <button id="patch-prev" disabled>&lsaquo;</button>
-          <span class="patch-display" id="patch-display">000</span>
-          <button id="patch-next" disabled>&rsaquo;</button>
+    <div id="midi-modal" class="search-modal hidden">
+      <div class="search-modal-content">
+        <div class="globals-modal-header">
+          <span class="globals-title">MIDI Device</span>
+          <button id="midi-close" class="icon-btn" title="Close">&times;</button>
         </div>
-      </div>
-    </div>
-    <div class="controls">
-      <div class="button-row">
-        <button id="rescan-btn">Rescan</button>
-        <button id="advanced-btn">Advanced</button>
-      </div>
-      <div id="advanced-panel" class="advanced-panel hidden">
-        <label for="device-select">MIDI Device</label>
-        <select id="device-select">
-          <option disabled selected>No devices</option>
-        </select>
-        <button id="identify-btn" disabled>Identify Device</button>
+        <div class="midi-body">
+          <label for="device-select">MIDI Device</label>
+          <select id="device-select">
+            <option disabled selected>No devices</option>
+          </select>
+          <div class="midi-actions">
+            <button id="identify-btn" disabled>Identify</button>
+            <button id="rescan-btn">Rescan</button>
+          </div>
+        </div>
       </div>
     </div>
     <div id="globals-modal" class="search-modal hidden">
