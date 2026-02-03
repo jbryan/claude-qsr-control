@@ -1,4 +1,10 @@
 import { jest } from '@jest/globals';
+import 'fake-indexeddb/auto';
+
+// Polyfill structuredClone for jsdom (used by fake-indexeddb)
+if (typeof globalThis.structuredClone === 'undefined') {
+  globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
+}
 
 // Mock Web MIDI API
 

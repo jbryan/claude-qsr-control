@@ -1,5 +1,7 @@
 import { jest } from '@jest/globals';
 import { MockMIDIAccess, MockMIDIInput, MockMIDIOutput, setMockMIDIAccess } from './setup.js';
+import { putProgram, putMix, clearAll } from '../public/js/store.js';
+import { Program, Mix, encodeProgName, encodeMixName, setBits } from '../public/js/models.js';
 
 let mockAccess;
 let qsrInput;
@@ -91,6 +93,34 @@ const QSR_IDENTITY_REPLY = [
   0x31, 0x30, 0x30, 0x32, 0xF7,
 ];
 
+function packQSData(unpacked) {
+  const packed = [];
+  for (let i = 0; i + 6 < unpacked.length; i += 7) {
+    const b = unpacked.slice(i, i + 7);
+    packed.push(b[0] & 0x7F);
+    packed.push(((b[0] >> 7) & 0x01) | ((b[1] & 0x3F) << 1));
+    packed.push(((b[1] >> 6) & 0x03) | ((b[2] & 0x1F) << 2));
+    packed.push(((b[2] >> 5) & 0x07) | ((b[3] & 0x0F) << 3));
+    packed.push(((b[3] >> 4) & 0x0F) | ((b[4] & 0x07) << 4));
+    packed.push(((b[4] >> 3) & 0x1F) | ((b[5] & 0x03) << 5));
+    packed.push(((b[5] >> 2) & 0x3F) | ((b[6] & 0x01) << 6));
+    packed.push((b[6] >> 1) & 0x7F);
+  }
+  return packed;
+}
+
+function buildSysexReply(opcode, num, unpacked) {
+  const packed = packQSData(unpacked);
+  const response = new Uint8Array(7 + packed.length + 1);
+  response[0] = 0xF0;
+  response[1] = 0x00; response[2] = 0x00; response[3] = 0x0E; response[4] = 0x0E;
+  response[5] = opcode;
+  response[6] = num & 0x7F;
+  for (let i = 0; i < packed.length; i++) response[7 + i] = packed[i];
+  response[response.length - 1] = 0xF7;
+  return response;
+}
+
 function autoReplyIdentity(output, input) {
   output.send = jest.fn(function (data) {
     const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -98,13 +128,55 @@ function autoReplyIdentity(output, input) {
     if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
       setTimeout(() => input.receive(QSR_IDENTITY_REPLY), 0);
     }
+    // Reply to program dump request (opcode 0x01)
+    if (arr[0] === 0xF0 && arr[5] === 0x01) {
+      const num = arr[6];
+      const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
+      setTimeout(() => input.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+    }
+    // Reply to mix dump request (opcode 0x0F)
+    if (arr[0] === 0xF0 && arr[5] === 0x0F) {
+      const num = arr[6];
+      const mix = makeMinimalMix(`User Mix ${String(num).padStart(3, '0')}`);
+      setTimeout(() => input.receive(buildSysexReply(0x0E, num, mix.toUnpacked())), 0);
+    }
   });
+}
+
+function makeMinimalProgram(name) {
+  const unpacked = new Array(350).fill(0);
+  encodeProgName(unpacked, name);
+  const baseBitOff = 10 * 8;
+  setBits(unpacked, baseBitOff, 1, 0);
+  setBits(unpacked, baseBitOff + 84 * 8 + 3, 1, 1);
+  return Program.fromUnpacked(unpacked);
+}
+
+function makeMinimalMix(name) {
+  const unpacked = new Array(138).fill(0);
+  encodeMixName(unpacked, name);
+  setBits(unpacked, 0, 1, 0);
+  setBits(unpacked, 1, 4, 0);
+  const baseBit = 10 * 8;
+  setBits(unpacked, baseBit + 11, 1, 1);
+  return Mix.fromUnpacked(unpacked);
+}
+
+async function seedUserBanks() {
+  for (let i = 0; i < 128; i++) {
+    await putProgram(i, makeMinimalProgram(`User ${String(i).padStart(3, '0')}`));
+  }
+  for (let i = 0; i < 100; i++) {
+    await putMix(i, makeMinimalMix(`User Mix ${String(i).padStart(3, '0')}`));
+  }
 }
 
 beforeEach(async () => {
   jest.resetModules();
   jest.useFakeTimers();
   localStorage.clear();
+  // Clean IndexedDB
+  await clearAll();
   setupDOM();
   mockAccess = new MockMIDIAccess();
   const dev = mockAccess.addDevice('Alesis QSR');
@@ -112,11 +184,8 @@ beforeEach(async () => {
   qsrOutput = dev.output;
   autoReplyIdentity(qsrOutput, qsrInput);
   setMockMIDIAccess(mockAccess);
-  // Pre-seed user bank cache to prevent auto-refresh during tests
-  localStorage.setItem('qsr-user-banks', JSON.stringify({
-    programs: Array.from({ length: 128 }, (_, i) => `User ${String(i).padStart(3, '0')}`),
-    mixes: Array.from({ length: 100 }, (_, i) => `User Mix ${String(i).padStart(3, '0')}`),
-  }));
+  // Pre-seed IndexedDB user bank cache to prevent auto-refresh during tests
+  await seedUserBanks();
 });
 
 afterEach(() => {
@@ -125,10 +194,12 @@ afterEach(() => {
 
 async function loadApp() {
   const mod = await import('../public/js/app.js');
-  // Let init() run: requestMIDIAccess -> autoScan -> queryDeviceIdentity
-  await jest.advanceTimersByTimeAsync(100);
-  // Let patch name request timeout
-  await jest.advanceTimersByTimeAsync(3000);
+  // Let init() run: requestMIDIAccess -> autoScan -> queryDeviceIdentity,
+  // then settle async chains (readProgram reply, IndexedDB caching).
+  // Multiple small advances give microtask queues time to flush.
+  for (let i = 0; i < 10; i++) {
+    await jest.advanceTimersByTimeAsync(100);
+  }
   return mod;
 }
 
@@ -408,8 +479,11 @@ describe('patch navigation', () => {
 describe('rescan', () => {
   test('rescan button triggers new scan', async () => {
     await loadApp();
+    // Verify rescan button is enabled and click it
+    const btn = document.getElementById('rescan-btn');
+    expect(btn.disabled).toBe(false);
     qsrOutput.send.mockClear();
-    document.getElementById('rescan-btn').click();
+    btn.click();
     await jest.advanceTimersByTimeAsync(3000);
     // Should have sent identity inquiry again
     const inquiryCalls = qsrOutput.send.mock.calls.filter(c => {
@@ -581,50 +655,8 @@ describe('preset name lookup', () => {
 // --- Stale fetch guard ---
 
 describe('stale fetch guard', () => {
-  function packQSData(unpacked) {
-    const packed = [];
-    for (let i = 0; i + 6 < unpacked.length; i += 7) {
-      const b = unpacked.slice(i, i + 7);
-      packed.push(b[0] & 0x7F);
-      packed.push(((b[0] >> 7) & 0x01) | ((b[1] & 0x3F) << 1));
-      packed.push(((b[1] >> 6) & 0x03) | ((b[2] & 0x1F) << 2));
-      packed.push(((b[2] >> 5) & 0x07) | ((b[3] & 0x0F) << 3));
-      packed.push(((b[3] >> 4) & 0x0F) | ((b[4] & 0x07) << 4));
-      packed.push(((b[4] >> 3) & 0x1F) | ((b[5] & 0x03) << 5));
-      packed.push(((b[5] >> 2) & 0x3F) | ((b[6] & 0x01) << 6));
-      packed.push((b[6] >> 1) & 0x7F);
-    }
-    return packed;
-  }
-
-  function buildProgramDumpReply(patchNum, name) {
-    const charVals = Array.from(name.padEnd(10)).map(c => c.charCodeAt(0) - 32);
-    const bits = [];
-    for (let i = 0; i < 8; i++) bits.push(0);
-    for (const val of charVals) {
-      for (let bit = 0; bit < 7; bit++) bits.push((val >> bit) & 1);
-    }
-    while (bits.length % 56 !== 0) bits.push(0);
-    const unpackedBytes = [];
-    for (let i = 0; i < bits.length; i += 8) {
-      let byte = 0;
-      for (let b = 0; b < 8 && (i + b) < bits.length; b++) byte |= bits[i + b] << b;
-      unpackedBytes.push(byte);
-    }
-    const packed = packQSData(unpackedBytes);
-    const response = new Uint8Array(7 + packed.length + 1);
-    response[0] = 0xF0;
-    response[1] = 0x00; response[2] = 0x00; response[3] = 0x0E; response[4] = 0x0E;
-    response[5] = 0x00;
-    response[6] = patchNum & 0x7F;
-    for (let i = 0; i < packed.length; i++) response[7 + i] = packed[i];
-    response[response.length - 1] = 0xF7;
-    return response;
-  }
-
   test('discards stale patch name when a newer fetch supersedes it', async () => {
     // Set up output to auto-reply with patch names, but with a delay
-    const origSend = qsrOutput.send;
     qsrOutput.send = jest.fn(function (data) {
       const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
       // Identity inquiry
@@ -632,12 +664,12 @@ describe('stale fetch guard', () => {
         setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
         return;
       }
-      // Program dump request
+      // Program dump request — reply with delay so we can trigger a second fetch before this resolves
       if (arr[0] === 0xF0 && arr[5] === 0x01) {
         const num = arr[6];
-        // Reply with delay so we can trigger a second fetch before this resolves
+        const prog = makeMinimalProgram(`Patch${num}   `);
         setTimeout(() => {
-          qsrInput.receive(buildProgramDumpReply(num, `Patch${num}   `));
+          qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked()));
         }, 100);
       }
     });
@@ -1162,12 +1194,15 @@ describe('user bank names', () => {
     expect(document.getElementById('refresh-btn').disabled).toBe(true);
   });
 
-  test('localStorage round-trip for user bank data', async () => {
-    const data = {
-      programs: Array.from({ length: 128 }, (_, i) => `Prog ${i}`),
-      mixes: Array.from({ length: 100 }, (_, i) => `Mix ${i}`),
-    };
-    localStorage.setItem('qsr-user-banks', JSON.stringify(data));
+  test('IndexedDB round-trip for user bank data', async () => {
+    // Clear and re-seed with custom names
+    await clearAll();
+    for (let i = 0; i < 128; i++) {
+      await putProgram(i, makeMinimalProgram(`Prog ${i}`));
+    }
+    for (let i = 0; i < 100; i++) {
+      await putMix(i, makeMinimalMix(`Mix ${i}`));
+    }
     await loadApp();
 
     // Verify it was loaded (search should include user bank entries)
@@ -1182,11 +1217,14 @@ describe('user bank names', () => {
   });
 
   test('user bank names appear in search results after caching', async () => {
-    const data = {
-      programs: Array.from({ length: 128 }, (_, i) => `MyProg${i}`),
-      mixes: Array.from({ length: 100 }, (_, i) => `MyMix${i}`),
-    };
-    localStorage.setItem('qsr-user-banks', JSON.stringify(data));
+    // Clear and re-seed with custom names
+    await clearAll();
+    for (let i = 0; i < 128; i++) {
+      await putProgram(i, makeMinimalProgram(`MyProg${i}`));
+    }
+    for (let i = 0; i < 100; i++) {
+      await putMix(i, makeMinimalMix(`MyMix${i}`));
+    }
     await loadApp();
 
     document.getElementById('search-btn').click();
@@ -1205,11 +1243,9 @@ describe('user bank names', () => {
   });
 
   test('search shows user programs under PROG — User group', async () => {
-    const data = {
-      programs: ['TestProg'],
-      mixes: [],
-    };
-    localStorage.setItem('qsr-user-banks', JSON.stringify(data));
+    // Clear and seed with a program at slot 5 (not slot 0, which fetchPatchName overwrites)
+    await clearAll();
+    await putProgram(5, makeMinimalProgram('TestProg'));
     await loadApp();
 
     document.getElementById('search-btn').click();

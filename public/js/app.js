@@ -1,6 +1,8 @@
-import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestPatchName, requestGlobalData, requestUserProgram, requestNewMix, unpackQSData } from './midi.js';
+import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestGlobalData, unpackQSData } from './midi.js';
 import { getPresetName, getAllPresets } from './presets.js';
 import { getKeyboardSampleName, getDrumSampleName } from './samples.js';
+import { getNestedField, Program, Mix, readProgram, readMix } from './models.js';
+import { putProgram, putMix, getAllNames, hasData } from './store.js';
 
 const deviceSelect = document.getElementById('device-select');
 const identifyBtn = document.getElementById('identify-btn');
@@ -56,41 +58,23 @@ const allPresets = getAllPresets();
 let searchHighlight = -1;
 
 const STORAGE_KEY = 'qsr-control-state';
-const USERBANK_KEY = 'qsr-user-banks';
-let userBankNames = null;
+let userBankCache = null;
 
-function loadUserBankNames() {
-  try {
-    const raw = localStorage.getItem(USERBANK_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (Array.isArray(data.programs) && Array.isArray(data.mixes)) {
-      return data;
-    }
-  } catch {
-    // Corrupt or unavailable
-  }
-  return null;
+async function loadUserBankCache() {
+  userBankCache = await getAllNames();
 }
 
-function saveUserBankNames(data) {
-  try {
-    localStorage.setItem(USERBANK_KEY, JSON.stringify(data));
-  } catch {
-    // localStorage unavailable
-  }
-}
+// Migration: discard old localStorage name-only cache
+try { localStorage.removeItem('qsr-user-banks'); } catch { /* ignore */ }
 
 function getUserBankPresets() {
-  if (!userBankNames) return [];
+  if (!userBankCache) return [];
   const results = [];
-  for (let i = 0; i < userBankNames.programs.length; i++) {
-    const name = userBankNames.programs[i];
-    if (name) results.push({ mode: 'prog', bank: 0, patch: i, name });
+  for (const p of userBankCache.programs) {
+    if (p.name) results.push({ mode: 'prog', bank: 0, patch: p.number, name: p.name });
   }
-  for (let i = 0; i < userBankNames.mixes.length; i++) {
-    const name = userBankNames.mixes[i];
-    if (name) results.push({ mode: 'mix', bank: 0, patch: i, name });
+  for (const m of userBankCache.mixes) {
+    if (m.name) results.push({ mode: 'mix', bank: 0, patch: m.number, name: m.name });
   }
   return results;
 }
@@ -98,41 +82,37 @@ function getUserBankPresets() {
 async function refreshUserBanks() {
   if (!activeDevice) return;
   refreshBtn.disabled = true;
-  const programs = [];
-  const mixes = [];
   const total = 228;
 
   for (let i = 0; i < 128; i++) {
     lcdLine1.textContent = `Refreshing ${i + 1}/${total}...`;
     try {
-      const name = await requestPatchName(
+      const program = await readProgram(
         activeDevice.device.output,
         activeDevice.device.input,
-        'prog', 0, i,
+        i,
       );
-      programs.push(name || `User ${String(i).padStart(3, '0')}`);
+      await putProgram(i, program);
     } catch {
-      programs.push(`User ${String(i).padStart(3, '0')}`);
+      // Skip failed reads
     }
   }
 
   for (let i = 0; i < 100; i++) {
     lcdLine1.textContent = `Refreshing ${128 + i + 1}/${total}...`;
     try {
-      const name = await requestPatchName(
+      const mix = await readMix(
         activeDevice.device.output,
         activeDevice.device.input,
-        'mix', 0, i,
+        i,
       );
-      mixes.push(name || `User Mix ${String(i).padStart(3, '0')}`);
+      await putMix(i, mix);
     } catch {
-      mixes.push(`User Mix ${String(i).padStart(3, '0')}`);
+      // Skip failed reads
     }
   }
 
-  const data = { programs, mixes };
-  userBankNames = data;
-  saveUserBankNames(data);
+  await loadUserBankCache();
   refreshBtn.disabled = false;
   if (activeDevice) {
     updateLCD();
@@ -202,17 +182,32 @@ async function fetchPatchName() {
     return;
   }
 
+  // User bank: fetch full dump, cache to IndexedDB, and extract name from model.
+  if (currentBank !== 0) return;
   try {
-    const name = await requestPatchName(
-      activeDevice.device.output,
-      activeDevice.device.input,
-      currentMode,
-      currentBank,
-      currentPatch,
-    );
-    if (id !== nameFetchId) return;
-    currentPatchName = name;
-    updateLCD();
+    if (currentMode === 'prog') {
+      const program = await readProgram(
+        activeDevice.device.output,
+        activeDevice.device.input,
+        currentPatch,
+      );
+      if (id !== nameFetchId) return;
+      currentPatchName = program.name;
+      updateLCD();
+      await putProgram(currentPatch, program);
+      await loadUserBankCache();
+    } else {
+      const mix = await readMix(
+        activeDevice.device.output,
+        activeDevice.device.input,
+        currentPatch,
+      );
+      if (id !== nameFetchId) return;
+      currentPatchName = mix.name;
+      updateLCD();
+      await putMix(currentPatch, mix);
+      await loadUserBankCache();
+    }
   } catch {
     // Timeout or unknown bank — leave name blank
   }
@@ -364,8 +359,8 @@ async function autoScan() {
     // CC#0 bank select works and mode switching behaves correctly.
     sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0);
     restoreOrDefaultState();
-    userBankNames = loadUserBankNames();
-    if (!userBankNames) refreshUserBanks();
+    await loadUserBankCache();
+    if (!(await hasData())) refreshUserBanks();
   } else {
     activeDevice = null;
     updateModeButtons();
@@ -392,8 +387,8 @@ async function handleIdentify() {
     activeDevice = { device, identity };
     sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0); // GM off
     restoreOrDefaultState();
-    userBankNames = loadUserBankNames();
-    if (!userBankNames) refreshUserBanks();
+    await loadUserBankCache();
+    if (!(await hasData())) refreshUserBanks();
   } catch (err) {
     setStatus(err.message, 'error');
   } finally {
@@ -684,23 +679,6 @@ document.addEventListener('keydown', (e) => {
 
 // --- Program Info dialog ---
 
-function extractBits(bytes, bitOffset, numBits) {
-  let val = 0;
-  for (let i = 0; i < numBits; i++) {
-    const byteIdx = (bitOffset + i) >> 3;
-    const bitIdx = (bitOffset + i) & 7;
-    if (bytes[byteIdx] & (1 << bitIdx)) val |= (1 << i);
-  }
-  return val;
-}
-
-function extractProgName(unpacked) {
-  let name = '';
-  for (let i = 0; i < 10; i++) {
-    name += String.fromCharCode(extractBits(unpacked, 8 + i * 7, 7) + 32);
-  }
-  return name.trim();
-}
 
 const PAN_LABELS = ['Left 3', 'Left 2', 'Left 1', 'Center', 'Right 1', 'Right 2', 'Right 3'];
 const OUTPUT_LABELS = ['Main', 'Aux', 'Off'];
@@ -746,139 +724,134 @@ function fmtNote(v) {
   return `${names[v % 12]}${Math.floor(v / 12) - 2} (${v})`;
 }
 
-// Keyboard sound parameters — bitAddr is the LSB bit position from the spec
-// (byte * 8 + bit), relative to start of the sound section.
 const KEYBOARD_SOUND_PARAMS = [
   // Sample
-  { name: 'Sample Group', bits: 6, bitAddr: 1, offset: 0, section: 'Sample' },
-  { name: 'Sample Number', bits: 7, bitAddr: 7, offset: 0, section: 'Sample' },
+  { name: 'Sample Group', field: 'sample.group', offset: 0, section: 'Sample' },
+  { name: 'Sample Number', field: 'sample.number', offset: 0, section: 'Sample' },
   // Level
-  { name: 'Volume', bits: 7, bitAddr: 14, offset: 0, section: 'Level' },
-  { name: 'Pan', bits: 3, bitAddr: 21, offset: 0, section: 'Level', format: fmtLookup(PAN_LABELS) },
-  { name: 'Output', bits: 2, bitAddr: 24, offset: 0, section: 'Level', format: fmtLookup(OUTPUT_LABELS) },
-  { name: 'Effect Level', bits: 7, bitAddr: 26, offset: 0, section: 'Level' },
-  { name: 'Effect Bus', bits: 2, bitAddr: 33, offset: 0, section: 'Level', format: fmtLookup(EFFECT_BUS_LABELS) },
+  { name: 'Volume', field: 'level.volume', offset: 0, section: 'Level' },
+  { name: 'Pan', field: 'level.pan', offset: 0, section: 'Level', format: fmtLookup(PAN_LABELS) },
+  { name: 'Output', field: 'level.output', offset: 0, section: 'Level', format: fmtLookup(OUTPUT_LABELS) },
+  { name: 'Effect Level', field: 'level.effectLevel', offset: 0, section: 'Level' },
+  { name: 'Effect Bus', field: 'level.effectBus', offset: 0, section: 'Level', format: fmtLookup(EFFECT_BUS_LABELS) },
   // Pitch
-  { name: 'Semitone', bits: 6, bitAddr: 35, offset: -24, section: 'Pitch', format: fmtSigned(-24) },
-  { name: 'Detune', bits: 8, bitAddr: 41, offset: -99, section: 'Pitch', format: fmtSigned(-99) },
-  { name: 'Detune Type', bits: 1, bitAddr: 49, offset: 0, section: 'Pitch', format: fmtLookup(['Normal', 'Equal Temper']) },
-  { name: 'Pitch Wheel Mod', bits: 4, bitAddr: 50, offset: 0, section: 'Pitch' },
-  { name: 'Aftertouch Mod', bits: 8, bitAddr: 54, offset: -99, section: 'Pitch', format: fmtSigned(-99) },
-  { name: 'LFO Mod', bits: 8, bitAddr: 62, offset: -99, section: 'Pitch', format: fmtSigned(-99) },
-  { name: 'Env Mod', bits: 8, bitAddr: 70, offset: -99, section: 'Pitch', format: fmtSigned(-99) },
-  { name: 'Portamento Mode', bits: 2, bitAddr: 78, offset: 0, section: 'Pitch', format: fmtLookup(PORTAMENTO_LABELS) },
-  { name: 'Portamento Rate', bits: 7, bitAddr: 80, offset: 0, section: 'Pitch' },
-  { name: 'Key Mode', bits: 2, bitAddr: 87, offset: 0, section: 'Pitch', format: fmtLookup(KEY_MODE_LABELS) },
+  { name: 'Semitone', field: 'pitch.semitone', offset: -24, section: 'Pitch', format: fmtSigned(-24) },
+  { name: 'Detune', field: 'pitch.detune', offset: -99, section: 'Pitch', format: fmtSigned(-99) },
+  { name: 'Detune Type', field: 'pitch.detuneType', offset: 0, section: 'Pitch', format: fmtLookup(['Normal', 'Equal Temper']) },
+  { name: 'Pitch Wheel Mod', field: 'pitch.pitchWheelMod', offset: 0, section: 'Pitch' },
+  { name: 'Aftertouch Mod', field: 'pitch.aftertouchMod', offset: -99, section: 'Pitch', format: fmtSigned(-99) },
+  { name: 'LFO Mod', field: 'pitch.lfoMod', offset: -99, section: 'Pitch', format: fmtSigned(-99) },
+  { name: 'Env Mod', field: 'pitch.envMod', offset: -99, section: 'Pitch', format: fmtSigned(-99) },
+  { name: 'Portamento Mode', field: 'pitch.portamentoMode', offset: 0, section: 'Pitch', format: fmtLookup(PORTAMENTO_LABELS) },
+  { name: 'Portamento Rate', field: 'pitch.portamentoRate', offset: 0, section: 'Pitch' },
+  { name: 'Key Mode', field: 'pitch.keyMode', offset: 0, section: 'Pitch', format: fmtLookup(KEY_MODE_LABELS) },
   // Filter
-  { name: 'Frequency', bits: 7, bitAddr: 89, offset: 0, section: 'Filter' },
-  { name: 'Keyboard Track', bits: 1, bitAddr: 96, offset: 0, section: 'Filter', format: fmtBool('On', 'Off') },
-  { name: 'Velocity Mod', bits: 8, bitAddr: 97, offset: -99, section: 'Filter', format: fmtSigned(-99) },
-  { name: 'Pitch Wheel Mod', bits: 8, bitAddr: 105, offset: -99, section: 'Filter', format: fmtSigned(-99) },
-  { name: 'Aftertouch Mod', bits: 8, bitAddr: 113, offset: -99, section: 'Filter', format: fmtSigned(-99) },
-  { name: 'LFO Mod', bits: 8, bitAddr: 121, offset: -99, section: 'Filter', format: fmtSigned(-99) },
-  { name: 'Env Mod', bits: 8, bitAddr: 129, offset: -99, section: 'Filter', format: fmtSigned(-99) },
+  { name: 'Frequency', field: 'filter.frequency', offset: 0, section: 'Filter' },
+  { name: 'Keyboard Track', field: 'filter.keyboardTrack', offset: 0, section: 'Filter', format: fmtBool('On', 'Off') },
+  { name: 'Velocity Mod', field: 'filter.velocityMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
+  { name: 'Pitch Wheel Mod', field: 'filter.pitchWheelMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
+  { name: 'Aftertouch Mod', field: 'filter.aftertouchMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
+  { name: 'LFO Mod', field: 'filter.lfoMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
+  { name: 'Env Mod', field: 'filter.envMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
   // Amp
-  { name: 'Velocity Curve', bits: 4, bitAddr: 137, offset: 0, section: 'Amp', format: fmtLookup(VEL_CURVE_LABELS) },
-  { name: 'Aftertouch Mod', bits: 8, bitAddr: 141, offset: -99, section: 'Amp', format: fmtSigned(-99) },
-  { name: 'LFO Mod', bits: 8, bitAddr: 149, offset: -99, section: 'Amp', format: fmtSigned(-99) },
+  { name: 'Velocity Curve', field: 'amp.velocityCurve', offset: 0, section: 'Amp', format: fmtLookup(VEL_CURVE_LABELS) },
+  { name: 'Aftertouch Mod', field: 'amp.aftertouchMod', offset: -99, section: 'Amp', format: fmtSigned(-99) },
+  { name: 'LFO Mod', field: 'amp.lfoMod', offset: -99, section: 'Amp', format: fmtSigned(-99) },
   // Note Range
-  { name: 'Low Note', bits: 7, bitAddr: 157, offset: 0, section: 'Note Range', format: fmtNote },
-  { name: 'High Note', bits: 7, bitAddr: 164, offset: 0, section: 'Note Range', format: fmtNote },
-  { name: 'Overlap', bits: 7, bitAddr: 171, offset: 0, section: 'Note Range' },
+  { name: 'Low Note', field: 'noteRange.lowNote', offset: 0, section: 'Note Range', format: fmtNote },
+  { name: 'High Note', field: 'noteRange.highNote', offset: 0, section: 'Note Range', format: fmtNote },
+  { name: 'Overlap', field: 'noteRange.overlap', offset: 0, section: 'Note Range' },
   // Mod Routings 1-6
-  ...Array.from({ length: 6 }, (_, m) => {
-    const base = 178 + m * 19;
-    return [
-      { name: 'Source', bits: 5, bitAddr: base, offset: 0, section: `Mod ${m + 1}`, format: fmtLookup(MOD_SOURCES) },
-      { name: 'Destination', bits: 5, bitAddr: base + 5, offset: 0, section: `Mod ${m + 1}`, format: fmtLookup(MOD_DESTS) },
-      { name: 'Amplitude', bits: 8, bitAddr: base + 10, offset: -99, section: `Mod ${m + 1}`, format: fmtSigned(-99) },
-      { name: 'Gate', bits: 1, bitAddr: base + 18, offset: 0, section: `Mod ${m + 1}`, format: fmtBool('On', 'Off') },
-    ];
-  }).flat(),
+  ...Array.from({ length: 6 }, (_, m) => [
+    { name: 'Source', field: `mods.${m}.source`, offset: 0, section: `Mod ${m + 1}`, format: fmtLookup(MOD_SOURCES) },
+    { name: 'Destination', field: `mods.${m}.destination`, offset: 0, section: `Mod ${m + 1}`, format: fmtLookup(MOD_DESTS) },
+    { name: 'Amplitude', field: `mods.${m}.amplitude`, offset: -99, section: `Mod ${m + 1}`, format: fmtSigned(-99) },
+    { name: 'Gate', field: `mods.${m}.gate`, offset: 0, section: `Mod ${m + 1}`, format: fmtBool('On', 'Off') },
+  ]).flat(),
   // Pitch LFO
-  { name: 'Waveform', bits: 3, bitAddr: 292, offset: 0, section: 'Pitch LFO', format: fmtLookup(LFO_WAVE_LABELS) },
-  { name: 'Speed', bits: 7, bitAddr: 295, offset: 0, section: 'Pitch LFO' },
-  { name: 'Delay', bits: 7, bitAddr: 302, offset: 0, section: 'Pitch LFO' },
-  { name: 'Trigger', bits: 2, bitAddr: 309, offset: 0, section: 'Pitch LFO', format: fmtLookup(LFO_TRIG_LABELS) },
-  { name: 'Level', bits: 7, bitAddr: 311, offset: 0, section: 'Pitch LFO' },
-  { name: 'Mod Wheel Mod', bits: 8, bitAddr: 318, offset: -99, section: 'Pitch LFO', format: fmtSigned(-99) },
-  { name: 'Aftertouch Mod', bits: 8, bitAddr: 326, offset: -99, section: 'Pitch LFO', format: fmtSigned(-99) },
+  { name: 'Waveform', field: 'pitchLfo.waveform', offset: 0, section: 'Pitch LFO', format: fmtLookup(LFO_WAVE_LABELS) },
+  { name: 'Speed', field: 'pitchLfo.speed', offset: 0, section: 'Pitch LFO' },
+  { name: 'Delay', field: 'pitchLfo.delay', offset: 0, section: 'Pitch LFO' },
+  { name: 'Trigger', field: 'pitchLfo.trigger', offset: 0, section: 'Pitch LFO', format: fmtLookup(LFO_TRIG_LABELS) },
+  { name: 'Level', field: 'pitchLfo.level', offset: 0, section: 'Pitch LFO' },
+  { name: 'Mod Wheel Mod', field: 'pitchLfo.modWheelMod', offset: -99, section: 'Pitch LFO', format: fmtSigned(-99) },
+  { name: 'Aftertouch Mod', field: 'pitchLfo.aftertouchMod', offset: -99, section: 'Pitch LFO', format: fmtSigned(-99) },
   // Filter LFO
-  { name: 'Waveform', bits: 3, bitAddr: 334, offset: 0, section: 'Filter LFO', format: fmtLookup(LFO_WAVE_LABELS) },
-  { name: 'Speed', bits: 7, bitAddr: 337, offset: 0, section: 'Filter LFO' },
-  { name: 'Delay', bits: 7, bitAddr: 344, offset: 0, section: 'Filter LFO' },
-  { name: 'Trigger', bits: 2, bitAddr: 351, offset: 0, section: 'Filter LFO', format: fmtLookup(LFO_TRIG_LABELS) },
-  { name: 'Level', bits: 7, bitAddr: 353, offset: 0, section: 'Filter LFO' },
-  { name: 'Mod Wheel Mod', bits: 8, bitAddr: 360, offset: -99, section: 'Filter LFO', format: fmtSigned(-99) },
-  { name: 'Aftertouch Mod', bits: 8, bitAddr: 368, offset: -99, section: 'Filter LFO', format: fmtSigned(-99) },
+  { name: 'Waveform', field: 'filterLfo.waveform', offset: 0, section: 'Filter LFO', format: fmtLookup(LFO_WAVE_LABELS) },
+  { name: 'Speed', field: 'filterLfo.speed', offset: 0, section: 'Filter LFO' },
+  { name: 'Delay', field: 'filterLfo.delay', offset: 0, section: 'Filter LFO' },
+  { name: 'Trigger', field: 'filterLfo.trigger', offset: 0, section: 'Filter LFO', format: fmtLookup(LFO_TRIG_LABELS) },
+  { name: 'Level', field: 'filterLfo.level', offset: 0, section: 'Filter LFO' },
+  { name: 'Mod Wheel Mod', field: 'filterLfo.modWheelMod', offset: -99, section: 'Filter LFO', format: fmtSigned(-99) },
+  { name: 'Aftertouch Mod', field: 'filterLfo.aftertouchMod', offset: -99, section: 'Filter LFO', format: fmtSigned(-99) },
   // Amp LFO
-  { name: 'Waveform', bits: 3, bitAddr: 376, offset: 0, section: 'Amp LFO', format: fmtLookup(LFO_WAVE_LABELS) },
-  { name: 'Speed', bits: 7, bitAddr: 379, offset: 0, section: 'Amp LFO' },
-  { name: 'Delay', bits: 7, bitAddr: 386, offset: 0, section: 'Amp LFO' },
-  { name: 'Trigger', bits: 2, bitAddr: 393, offset: 0, section: 'Amp LFO', format: fmtLookup(LFO_TRIG_LABELS) },
-  { name: 'Level', bits: 7, bitAddr: 395, offset: 0, section: 'Amp LFO' },
-  { name: 'Mod Wheel Mod', bits: 8, bitAddr: 402, offset: -99, section: 'Amp LFO', format: fmtSigned(-99) },
-  { name: 'Aftertouch Mod', bits: 8, bitAddr: 410, offset: -99, section: 'Amp LFO', format: fmtSigned(-99) },
+  { name: 'Waveform', field: 'ampLfo.waveform', offset: 0, section: 'Amp LFO', format: fmtLookup(LFO_WAVE_LABELS) },
+  { name: 'Speed', field: 'ampLfo.speed', offset: 0, section: 'Amp LFO' },
+  { name: 'Delay', field: 'ampLfo.delay', offset: 0, section: 'Amp LFO' },
+  { name: 'Trigger', field: 'ampLfo.trigger', offset: 0, section: 'Amp LFO', format: fmtLookup(LFO_TRIG_LABELS) },
+  { name: 'Level', field: 'ampLfo.level', offset: 0, section: 'Amp LFO' },
+  { name: 'Mod Wheel Mod', field: 'ampLfo.modWheelMod', offset: -99, section: 'Amp LFO', format: fmtSigned(-99) },
+  { name: 'Aftertouch Mod', field: 'ampLfo.aftertouchMod', offset: -99, section: 'Amp LFO', format: fmtSigned(-99) },
   // Pitch Envelope
-  { name: 'Attack', bits: 7, bitAddr: 418, offset: 0, section: 'Pitch Env' },
-  { name: 'Decay', bits: 7, bitAddr: 425, offset: 0, section: 'Pitch Env' },
-  { name: 'Sustain', bits: 7, bitAddr: 432, offset: 0, section: 'Pitch Env' },
-  { name: 'Release', bits: 7, bitAddr: 439, offset: 0, section: 'Pitch Env' },
-  { name: 'Delay', bits: 7, bitAddr: 446, offset: 0, section: 'Pitch Env' },
-  { name: 'Sustain Decay', bits: 7, bitAddr: 453, offset: 0, section: 'Pitch Env' },
-  { name: 'Trigger Type', bits: 2, bitAddr: 460, offset: 0, section: 'Pitch Env', format: fmtLookup(ENV_TRIG_LABELS) },
-  { name: 'Time Track', bits: 1, bitAddr: 462, offset: 0, section: 'Pitch Env', format: fmtBool('On', 'Off') },
-  { name: 'Sustain Pedal', bits: 1, bitAddr: 463, offset: 0, section: 'Pitch Env', format: fmtBool('On', 'Off') },
-  { name: 'Level', bits: 7, bitAddr: 464, offset: 0, section: 'Pitch Env' },
-  { name: 'Velocity Mod', bits: 8, bitAddr: 471, offset: -99, section: 'Pitch Env', format: fmtSigned(-99) },
+  { name: 'Attack', field: 'pitchEnv.attack', offset: 0, section: 'Pitch Env' },
+  { name: 'Decay', field: 'pitchEnv.decay', offset: 0, section: 'Pitch Env' },
+  { name: 'Sustain', field: 'pitchEnv.sustain', offset: 0, section: 'Pitch Env' },
+  { name: 'Release', field: 'pitchEnv.release', offset: 0, section: 'Pitch Env' },
+  { name: 'Delay', field: 'pitchEnv.delay', offset: 0, section: 'Pitch Env' },
+  { name: 'Sustain Decay', field: 'pitchEnv.sustainDecay', offset: 0, section: 'Pitch Env' },
+  { name: 'Trigger Type', field: 'pitchEnv.triggerType', offset: 0, section: 'Pitch Env', format: fmtLookup(ENV_TRIG_LABELS) },
+  { name: 'Time Track', field: 'pitchEnv.timeTrack', offset: 0, section: 'Pitch Env', format: fmtBool('On', 'Off') },
+  { name: 'Sustain Pedal', field: 'pitchEnv.sustainPedal', offset: 0, section: 'Pitch Env', format: fmtBool('On', 'Off') },
+  { name: 'Level', field: 'pitchEnv.level', offset: 0, section: 'Pitch Env' },
+  { name: 'Velocity Mod', field: 'pitchEnv.velocityMod', offset: -99, section: 'Pitch Env', format: fmtSigned(-99) },
   // Filter Envelope
-  { name: 'Attack', bits: 7, bitAddr: 479, offset: 0, section: 'Filter Env' },
-  { name: 'Decay', bits: 7, bitAddr: 486, offset: 0, section: 'Filter Env' },
-  { name: 'Sustain', bits: 7, bitAddr: 493, offset: 0, section: 'Filter Env' },
-  { name: 'Release', bits: 7, bitAddr: 500, offset: 0, section: 'Filter Env' },
-  { name: 'Delay', bits: 7, bitAddr: 507, offset: 0, section: 'Filter Env' },
-  { name: 'Sustain Decay', bits: 7, bitAddr: 514, offset: 0, section: 'Filter Env' },
-  { name: 'Trigger Type', bits: 2, bitAddr: 521, offset: 0, section: 'Filter Env', format: fmtLookup(ENV_TRIG_LABELS) },
-  { name: 'Time Track', bits: 1, bitAddr: 523, offset: 0, section: 'Filter Env', format: fmtBool('On', 'Off') },
-  { name: 'Sustain Pedal', bits: 1, bitAddr: 524, offset: 0, section: 'Filter Env', format: fmtBool('On', 'Off') },
-  { name: 'Level', bits: 7, bitAddr: 525, offset: 0, section: 'Filter Env' },
-  { name: 'Velocity Mod', bits: 8, bitAddr: 532, offset: -99, section: 'Filter Env', format: fmtSigned(-99) },
+  { name: 'Attack', field: 'filterEnv.attack', offset: 0, section: 'Filter Env' },
+  { name: 'Decay', field: 'filterEnv.decay', offset: 0, section: 'Filter Env' },
+  { name: 'Sustain', field: 'filterEnv.sustain', offset: 0, section: 'Filter Env' },
+  { name: 'Release', field: 'filterEnv.release', offset: 0, section: 'Filter Env' },
+  { name: 'Delay', field: 'filterEnv.delay', offset: 0, section: 'Filter Env' },
+  { name: 'Sustain Decay', field: 'filterEnv.sustainDecay', offset: 0, section: 'Filter Env' },
+  { name: 'Trigger Type', field: 'filterEnv.triggerType', offset: 0, section: 'Filter Env', format: fmtLookup(ENV_TRIG_LABELS) },
+  { name: 'Time Track', field: 'filterEnv.timeTrack', offset: 0, section: 'Filter Env', format: fmtBool('On', 'Off') },
+  { name: 'Sustain Pedal', field: 'filterEnv.sustainPedal', offset: 0, section: 'Filter Env', format: fmtBool('On', 'Off') },
+  { name: 'Level', field: 'filterEnv.level', offset: 0, section: 'Filter Env' },
+  { name: 'Velocity Mod', field: 'filterEnv.velocityMod', offset: -99, section: 'Filter Env', format: fmtSigned(-99) },
   // Amp Envelope
-  { name: 'Attack', bits: 7, bitAddr: 540, offset: 0, section: 'Amp Env' },
-  { name: 'Decay', bits: 7, bitAddr: 547, offset: 0, section: 'Amp Env' },
-  { name: 'Sustain', bits: 7, bitAddr: 554, offset: 0, section: 'Amp Env' },
-  { name: 'Release', bits: 7, bitAddr: 561, offset: 0, section: 'Amp Env' },
-  { name: 'Delay', bits: 7, bitAddr: 568, offset: 0, section: 'Amp Env' },
-  { name: 'Sustain Decay', bits: 7, bitAddr: 575, offset: 0, section: 'Amp Env' },
-  { name: 'Trigger Type', bits: 2, bitAddr: 582, offset: 0, section: 'Amp Env', format: fmtLookup(ENV_TRIG_LABELS) },
-  { name: 'Time Track', bits: 1, bitAddr: 584, offset: 0, section: 'Amp Env', format: fmtBool('On', 'Off') },
-  { name: 'Sustain Pedal', bits: 1, bitAddr: 585, offset: 0, section: 'Amp Env', format: fmtBool('On', 'Off') },
-  { name: 'Level', bits: 7, bitAddr: 586, offset: 0, section: 'Amp Env' },
+  { name: 'Attack', field: 'ampEnv.attack', offset: 0, section: 'Amp Env' },
+  { name: 'Decay', field: 'ampEnv.decay', offset: 0, section: 'Amp Env' },
+  { name: 'Sustain', field: 'ampEnv.sustain', offset: 0, section: 'Amp Env' },
+  { name: 'Release', field: 'ampEnv.release', offset: 0, section: 'Amp Env' },
+  { name: 'Delay', field: 'ampEnv.delay', offset: 0, section: 'Amp Env' },
+  { name: 'Sustain Decay', field: 'ampEnv.sustainDecay', offset: 0, section: 'Amp Env' },
+  { name: 'Trigger Type', field: 'ampEnv.triggerType', offset: 0, section: 'Amp Env', format: fmtLookup(ENV_TRIG_LABELS) },
+  { name: 'Time Track', field: 'ampEnv.timeTrack', offset: 0, section: 'Amp Env', format: fmtBool('On', 'Off') },
+  { name: 'Sustain Pedal', field: 'ampEnv.sustainPedal', offset: 0, section: 'Amp Env', format: fmtBool('On', 'Off') },
+  { name: 'Level', field: 'ampEnv.level', offset: 0, section: 'Amp Env' },
   // Tracking Generator
-  { name: 'Input', bits: 5, bitAddr: 593, offset: 0, section: 'Tracking', format: fmtLookup(MOD_SOURCES.slice(0, 23)) },
+  { name: 'Input', field: 'tracking.input', offset: 0, section: 'Tracking', format: fmtLookup(MOD_SOURCES.slice(0, 23)) },
   ...Array.from({ length: 11 }, (_, i) => ({
-    name: `Point ${i}`, bits: 7, bitAddr: 598 + i * 7, offset: 0, section: 'Tracking',
+    name: `Point ${i}`, field: `tracking.points.${i}`, offset: 0, section: 'Tracking',
   })),
 ];
 
 const DRUM_PAN_LABELS = ['Left 3', 'Left 2', 'Left 1', 'Center', 'Right 1', 'Right 2', 'Right 3'];
 
 const DRUM_PARAMS = [
-  { name: 'Sample Group', bits: 4, bitAddr: 0, offset: 0 },
-  { name: 'Sample Number', bits: 7, bitAddr: 4, offset: 0 },
-  { name: 'Volume', bits: 5, bitAddr: 11, offset: 0 },
-  { name: 'Pan', bits: 3, bitAddr: 16, offset: 0, format: fmtLookup(DRUM_PAN_LABELS) },
-  { name: 'Output', bits: 2, bitAddr: 19, offset: 0, format: fmtLookup(OUTPUT_LABELS) },
-  { name: 'Effect Level', bits: 6, bitAddr: 21, offset: 0 },
-  { name: 'Effect Bus', bits: 2, bitAddr: 27, offset: 0, format: fmtLookup(EFFECT_BUS_LABELS) },
-  { name: 'Pitch', bits: 7, bitAddr: 29, offset: -48, format: fmtSigned(-48) },
-  { name: 'Pitch Vel Mod', bits: 3, bitAddr: 36, offset: 0 },
-  { name: 'Filter Vel Mod', bits: 2, bitAddr: 39, offset: 0 },
-  { name: 'Velocity Curve', bits: 4, bitAddr: 41, offset: 0, format: fmtLookup(VEL_CURVE_LABELS) },
-  { name: 'Note Number', bits: 7, bitAddr: 45, offset: 0, format: fmtNote },
-  { name: 'Amp Env Decay', bits: 7, bitAddr: 52, offset: 0 },
-  { name: 'Mute Group', bits: 2, bitAddr: 59, offset: 0 },
-  { name: 'Note Range', bits: 2, bitAddr: 61, offset: 0 },
+  { name: 'Sample Group', field: 'sampleGroup', offset: 0 },
+  { name: 'Sample Number', field: 'sampleNumber', offset: 0 },
+  { name: 'Volume', field: 'volume', offset: 0 },
+  { name: 'Pan', field: 'pan', offset: 0, format: fmtLookup(DRUM_PAN_LABELS) },
+  { name: 'Output', field: 'output', offset: 0, format: fmtLookup(OUTPUT_LABELS) },
+  { name: 'Effect Level', field: 'effectLevel', offset: 0 },
+  { name: 'Effect Bus', field: 'effectBus', offset: 0, format: fmtLookup(EFFECT_BUS_LABELS) },
+  { name: 'Pitch', field: 'pitch', offset: -48, format: fmtSigned(-48) },
+  { name: 'Pitch Vel Mod', field: 'pitchVelMod', offset: 0 },
+  { name: 'Filter Vel Mod', field: 'filterVelMod', offset: 0 },
+  { name: 'Velocity Curve', field: 'velocityCurve', offset: 0, format: fmtLookup(VEL_CURVE_LABELS) },
+  { name: 'Note Number', field: 'noteNumber', offset: 0, format: fmtNote },
+  { name: 'Amp Env Decay', field: 'ampEnvDecay', offset: 0 },
+  { name: 'Mute Group', field: 'muteGroup', offset: 0 },
+  { name: 'Note Range', field: 'noteRange', offset: 0 },
 ];
 
 const ROM_ID_LABELS = ['QS+/S4+', 'QS', 'Reserved', 'Reserved'];
@@ -890,10 +863,8 @@ function renderSectionBlock(label, rowsHtml) {
     `</tbody></table></div>`;
 }
 
-function renderKeyboardSound(unpacked, baseBitOff) {
-  const sampleGroup = extractBits(unpacked, baseBitOff + 1, 6);
-  const sampleNum = extractBits(unpacked, baseBitOff + 7, 7);
-  const sampleName = getKeyboardSampleName(sampleGroup, sampleNum);
+function renderKeyboardSound(keyboard) {
+  const sampleName = getKeyboardSampleName(keyboard.sample.group, keyboard.sample.number);
 
   let html = renderSectionBlock('Sample',
     `<tr><td>Sample</td><td>${escapeHTML(sampleName)}</td></tr>`);
@@ -909,7 +880,7 @@ function renderKeyboardSound(unpacked, baseBitOff) {
       currentSection = p.section;
       rows = '';
     }
-    const raw = extractBits(unpacked, baseBitOff + p.bitAddr, p.bits);
+    const raw = getNestedField(keyboard, p.field);
     const val = p.format ? p.format(raw) : (p.offset ? String(raw + p.offset) : String(raw));
     rows += `<tr><td>${escapeHTML(p.name)}</td><td>${escapeHTML(String(val))}</td></tr>`;
   }
@@ -919,18 +890,15 @@ function renderKeyboardSound(unpacked, baseBitOff) {
   return html;
 }
 
-function renderDrumSound(unpacked, baseBitOff) {
+function renderDrumSound(drums) {
   let html = '';
-  const drumBaseBit = baseBitOff + 8;
-  for (let d = 0; d < 10; d++) {
-    const dBit = drumBaseBit + d * 72;
-    const drumGroup = extractBits(unpacked, dBit + 0, 4);
-    const drumNum = extractBits(unpacked, dBit + 4, 7);
-    const drumName = getDrumSampleName(drumGroup, drumNum);
+  for (let d = 0; d < drums.length; d++) {
+    const drum = drums[d];
+    const drumName = getDrumSampleName(drum.sampleGroup, drum.sampleNumber);
     let rows = '';
     for (const p of DRUM_PARAMS) {
-      if (p.name === 'Sample Group' || p.name === 'Sample Number') continue;
-      const raw = extractBits(unpacked, dBit + p.bitAddr, p.bits);
+      if (p.field === 'sampleGroup' || p.field === 'sampleNumber') continue;
+      const raw = drum[p.field];
       const val = p.format ? p.format(raw) : (p.offset ? String(raw + p.offset) : String(raw));
       rows += `<tr><td>${escapeHTML(p.name)}</td><td>${escapeHTML(String(val))}</td></tr>`;
     }
@@ -939,53 +907,38 @@ function renderDrumSound(unpacked, baseBitOff) {
   return html;
 }
 
-function renderProgInfo(unpacked) {
-  const progName = extractProgName(unpacked);
-  const romId = extractBits(unpacked, 78, 2);
-
+function renderProgInfo(program) {
   // Common section
   let html = '<table class="globals-table"><tbody>';
-  html += `<tr><td>Program Name</td><td>${escapeHTML(progName)}</td></tr>`;
-  html += `<tr><td>ROM ID</td><td>${ROM_ID_LABELS[romId] || romId}</td></tr>`;
+  html += `<tr><td>Program Name</td><td>${escapeHTML(program.name)}</td></tr>`;
+  html += `<tr><td>ROM ID</td><td>${ROM_ID_LABELS[program.romId] || program.romId}</td></tr>`;
   html += '</tbody></table>';
-
-  // Build sound metadata
-  const soundBases = [10, 95, 180, 265];
-  const sounds = soundBases.map((baseByteOff, s) => {
-    const baseBitOff = baseByteOff * 8;
-    const isDrum = extractBits(unpacked, baseBitOff, 1);
-    let enabled;
-    if (isDrum) {
-      enabled = extractBits(unpacked, baseBitOff + 81 * 8, 1);
-    } else {
-      enabled = extractBits(unpacked, baseBitOff + 84 * 8 + 3, 1);
-    }
-    return { index: s, baseBitOff, isDrum, enabled };
-  });
 
   // Tab bar
   html += '<div class="prog-info-tabs">';
-  for (const snd of sounds) {
-    const label = `Sound ${snd.index + 1}`;
-    const active = snd.index === 0 ? ' active' : '';
+  for (let s = 0; s < 4; s++) {
+    const snd = program.sounds[s];
+    const label = `Sound ${s + 1}`;
+    const active = s === 0 ? ' active' : '';
     const disabled = !snd.enabled ? ' disabled' : '';
-    html += `<button class="prog-info-tab${active}" data-tab="${snd.index}"${disabled}>${label}</button>`;
+    html += `<button class="prog-info-tab${active}" data-tab="${s}"${disabled}>${label}</button>`;
   }
   html += '</div>';
 
   // Tab panels
-  for (const snd of sounds) {
-    const active = snd.index === 0 ? ' active' : '';
-    html += `<div class="prog-info-panel${active}" data-panel="${snd.index}">`;
+  for (let s = 0; s < 4; s++) {
+    const snd = program.sounds[s];
+    const active = s === 0 ? ' active' : '';
+    html += `<div class="prog-info-panel${active}" data-panel="${s}">`;
     if (!snd.enabled) {
       const modeLabel = snd.isDrum ? 'Drum' : 'Keyboard';
       html += `<p class="globals-loading">${modeLabel} — Disabled</p>`;
     } else {
       html += '<div class="prog-info-sections">';
       if (snd.isDrum) {
-        html += renderDrumSound(unpacked, snd.baseBitOff);
+        html += renderDrumSound(snd.drums);
       } else {
-        html += renderKeyboardSound(unpacked, snd.baseBitOff);
+        html += renderKeyboardSound(snd.keyboard);
       }
       html += '</div>';
     }
@@ -1010,14 +963,16 @@ async function openProgInfo() {
   progInfoBody.innerHTML = '<p class="globals-loading">Requesting program data...</p>';
   if (!activeDevice) return;
   try {
-    const response = await requestUserProgram(
+    const program = await readProgram(
       activeDevice.device.output,
       activeDevice.device.input,
       currentPatch,
     );
-    const packed = response.slice(7, response.length - 1);
-    const unpacked = unpackQSData(packed);
-    renderProgInfo(unpacked);
+    renderProgInfo(program);
+    if (currentBank === 0) {
+      await putProgram(currentPatch, program);
+      await loadUserBankCache();
+    }
   } catch {
     progInfoBody.innerHTML = '<p class="globals-loading">Failed to read program data.</p>';
   }
@@ -1047,71 +1002,53 @@ const MIX_PROG_TYPE_LABELS = ['User', 'Preset 1', 'Preset 2', 'Preset 3', 'GenMI
 const MIX_OUTPUT_LABELS = ['Main', 'Aux', 'Off', 'Spare'];
 
 const MIX_CHANNEL_PARAMS = [
-  { name: 'Program Number', bits: 7, bitAddr: 0, offset: 0, section: 'Program' },
-  { name: 'Program Type', bits: 4, bitAddr: 7, offset: 0, section: 'Program', format: fmtLookup(MIX_PROG_TYPE_LABELS) },
-  { name: 'Enable', bits: 1, bitAddr: 11, offset: 0, section: 'Program', format: fmtBool('On', 'Off') },
-  { name: 'Volume', bits: 7, bitAddr: 12, offset: 0, section: 'Level' },
-  { name: 'Pan', bits: 3, bitAddr: 19, offset: 0, section: 'Level', format: fmtLookup(PAN_LABELS) },
-  { name: 'Output', bits: 2, bitAddr: 22, offset: 0, section: 'Level', format: fmtLookup(MIX_OUTPUT_LABELS) },
-  { name: 'Effect Level', bits: 7, bitAddr: 24, offset: 0, section: 'Level' },
-  { name: 'Effect Bus', bits: 3, bitAddr: 31, offset: 0, section: 'Level', format: fmtLookup(EFFECT_BUS_LABELS) },
-  { name: 'Pitch Octave', bits: 3, bitAddr: 34, offset: -2, section: 'Pitch', format: fmtSigned(-2) },
-  { name: 'Pitch Semitone', bits: 5, bitAddr: 37, offset: -12, section: 'Pitch', format: fmtSigned(-12) },
-  { name: 'Low Note', bits: 7, bitAddr: 42, offset: 0, section: 'Note Range', format: fmtNote },
-  { name: 'High Note', bits: 7, bitAddr: 49, offset: 0, section: 'Note Range', format: fmtNote },
-  { name: 'MIDI In', bits: 1, bitAddr: 56, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
-  { name: 'MIDI Out', bits: 1, bitAddr: 57, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
-  { name: 'MIDI Group', bits: 1, bitAddr: 58, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
-  { name: 'Wheels', bits: 1, bitAddr: 59, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
-  { name: 'Aftertouch', bits: 1, bitAddr: 60, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
-  { name: 'Sustain Pedal', bits: 1, bitAddr: 61, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
-  { name: 'Pedals/Controllers', bits: 1, bitAddr: 62, offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Program Number', field: 'programNumber', offset: 0, section: 'Program' },
+  { name: 'Program Type', field: 'programType', offset: 0, section: 'Program', format: fmtLookup(MIX_PROG_TYPE_LABELS) },
+  { name: 'Enable', field: 'enable', offset: 0, section: 'Program', format: fmtBool('On', 'Off') },
+  { name: 'Volume', field: 'volume', offset: 0, section: 'Level' },
+  { name: 'Pan', field: 'pan', offset: 0, section: 'Level', format: fmtLookup(PAN_LABELS) },
+  { name: 'Output', field: 'output', offset: 0, section: 'Level', format: fmtLookup(MIX_OUTPUT_LABELS) },
+  { name: 'Effect Level', field: 'effectLevel', offset: 0, section: 'Level' },
+  { name: 'Effect Bus', field: 'effectBus', offset: 0, section: 'Level', format: fmtLookup(EFFECT_BUS_LABELS) },
+  { name: 'Pitch Octave', field: 'pitchOctave', offset: -2, section: 'Pitch', format: fmtSigned(-2) },
+  { name: 'Pitch Semitone', field: 'pitchSemitone', offset: -12, section: 'Pitch', format: fmtSigned(-12) },
+  { name: 'Low Note', field: 'lowNote', offset: 0, section: 'Note Range', format: fmtNote },
+  { name: 'High Note', field: 'highNote', offset: 0, section: 'Note Range', format: fmtNote },
+  { name: 'MIDI In', field: 'midiIn', offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'MIDI Out', field: 'midiOut', offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'MIDI Group', field: 'midiGroup', offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Wheels', field: 'wheels', offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Aftertouch', field: 'aftertouch', offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Sustain Pedal', field: 'sustainPedal', offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
+  { name: 'Pedals/Controllers', field: 'pedalsControllers', offset: 0, section: 'MIDI Control', format: fmtBool('On', 'Off') },
 ];
 
-function extractMixName(unpacked) {
-  let name = '';
-  for (let i = 0; i < 10; i++) {
-    name += String.fromCharCode(extractBits(unpacked, 5 + i * 7, 7) + 32);
-  }
-  return name.trim();
-}
 
-function renderMixInfo(unpacked) {
-  const mixName = extractMixName(unpacked);
-  const effectMidiPC = extractBits(unpacked, 0, 1);
-  const effectChannel = extractBits(unpacked, 1, 4);
-
+function renderMixInfo(mix) {
   // Common section
   let html = '<table class="globals-table"><tbody>';
-  html += `<tr><td>Mix Name</td><td>${escapeHTML(mixName)}</td></tr>`;
-  html += `<tr><td>Effect MIDI PC</td><td>${effectMidiPC ? 'On' : 'Off'}</td></tr>`;
-  html += `<tr><td>Effect Channel</td><td>${effectChannel + 1}</td></tr>`;
+  html += `<tr><td>Mix Name</td><td>${escapeHTML(mix.name)}</td></tr>`;
+  html += `<tr><td>Effect MIDI PC</td><td>${mix.effectMidiPC ? 'On' : 'Off'}</td></tr>`;
+  html += `<tr><td>Effect Channel</td><td>${mix.effectChannel + 1}</td></tr>`;
   html += '</tbody></table>';
-
-  // Build channel metadata
-  const channels = [];
-  for (let ch = 0; ch < 16; ch++) {
-    const baseBit = (10 + ch * 8) * 8;
-    const enabled = extractBits(unpacked, baseBit + 11, 1);
-    channels.push({ index: ch, baseBit, enabled });
-  }
 
   // Tab bar
   html += '<div class="prog-info-tabs">';
-  for (const ch of channels) {
-    const label = `Ch ${ch.index + 1}`;
-    const active = ch.index === 0 ? ' active' : '';
-    const disabled = !ch.enabled ? ' disabled' : '';
-    html += `<button class="prog-info-tab${active}" data-tab="${ch.index}"${disabled}>${label}</button>`;
+  for (let ch = 0; ch < 16; ch++) {
+    const label = `Ch ${ch + 1}`;
+    const active = ch === 0 ? ' active' : '';
+    const disabled = !mix.channels[ch].enable ? ' disabled' : '';
+    html += `<button class="prog-info-tab${active}" data-tab="${ch}"${disabled}>${label}</button>`;
   }
   html += '</div>';
 
   // Tab panels
-  for (const ch of channels) {
-    const active = ch.index === 0 ? ' active' : '';
-    html += `<div class="prog-info-panel${active}" data-panel="${ch.index}">`;
-    if (!ch.enabled) {
-      html += `<p class="globals-loading">Channel ${ch.index + 1} — Disabled</p>`;
+  for (let ch = 0; ch < 16; ch++) {
+    const channel = mix.channels[ch];
+    const active = ch === 0 ? ' active' : '';
+    html += `<div class="prog-info-panel${active}" data-panel="${ch}">`;
+    if (!channel.enable) {
+      html += `<p class="globals-loading">Channel ${ch + 1} — Disabled</p>`;
     } else {
       html += '<div class="prog-info-sections">';
       let currentSection = '';
@@ -1124,7 +1061,7 @@ function renderMixInfo(unpacked) {
           currentSection = p.section;
           rows = '';
         }
-        const raw = extractBits(unpacked, ch.baseBit + p.bitAddr, p.bits);
+        const raw = channel[p.field];
         const val = p.format ? p.format(raw) : (p.offset ? String(raw + p.offset) : String(raw));
         rows += `<tr><td>${escapeHTML(p.name)}</td><td>${escapeHTML(String(val))}</td></tr>`;
       }
@@ -1154,14 +1091,16 @@ async function openMixInfo() {
   mixInfoBody.innerHTML = '<p class="globals-loading">Requesting mix data...</p>';
   if (!activeDevice) return;
   try {
-    const response = await requestNewMix(
+    const mix = await readMix(
       activeDevice.device.output,
       activeDevice.device.input,
       currentPatch,
     );
-    const packed = response.slice(7, response.length - 1);
-    const unpacked = unpackQSData(packed);
-    renderMixInfo(unpacked);
+    renderMixInfo(mix);
+    if (currentBank === 0) {
+      await putMix(currentPatch, mix);
+      await loadUserBankCache();
+    }
   } catch {
     mixInfoBody.innerHTML = '<p class="globals-loading">Failed to read mix data.</p>';
   }
@@ -1211,25 +1150,31 @@ function parseSyxFile(arrayBuffer) {
       }
       const opcode = msg[5];
       const num = msg[6];
-      const packed = msg.slice(7, msg.length - 1);
-      const unpacked = unpackQSData(packed);
 
       switch (opcode) {
-        case 0x00: // User Program
-          programs.push({ num, name: extractProgName(unpacked) });
+        case 0x00: { // User Program
+          const prog = Program.fromSysex(msg);
+          programs.push({ num, name: prog.name, program: prog });
           break;
-        case 0x0E: // New Mix (v2+)
-          newMixes.push({ num, name: extractMixName(unpacked) });
+        }
+        case 0x0E: { // New Mix (v2+)
+          const m = Mix.fromSysex(msg);
+          newMixes.push({ num, name: m.name, mix: m });
           break;
-        case 0x04: // Old Mix (<v2)
-          oldMixes.push({ num, name: extractMixName(unpacked) });
+        }
+        case 0x04: { // Old Mix (<v2)
+          const m = Mix.fromSysex(msg);
+          oldMixes.push({ num, name: m.name, mix: m });
           break;
+        }
         case 0x06: // User Effects
           effects.push({ num });
           break;
-        case 0x0A: // Global Data
-          global = unpacked;
+        case 0x0A: { // Global Data
+          const packed = msg.slice(7, msg.length - 1);
+          global = unpackQSData(packed);
           break;
+        }
         default:
           console.warn(`Unknown QS opcode 0x${opcode.toString(16).padStart(2, '0')}`);
       }
@@ -1335,6 +1280,18 @@ async function sendSyxToDevice() {
     if (i < msgs.length - 1) {
       await new Promise(r => setTimeout(r, 300));
     }
+  }
+
+  // Cache sent programs and mixes to IndexedDB
+  for (const p of currentSyxParsed.programs) {
+    await putProgram(p.num, p.program);
+  }
+  const mixes = currentSyxParsed.newMixes.length > 0 ? currentSyxParsed.newMixes : currentSyxParsed.oldMixes;
+  for (const m of mixes) {
+    await putMix(m.num, m.mix);
+  }
+  if (currentSyxParsed.programs.length || mixes.length) {
+    await loadUserBankCache();
   }
 
   titleEl.textContent = originalTitle;
