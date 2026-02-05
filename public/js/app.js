@@ -2,7 +2,7 @@ import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, se
 import { logSend } from './midi-log.js';
 import { getPresetName, getAllPresets } from './presets.js';
 import { getKeyboardSampleName, getDrumSampleName } from './samples.js';
-import { getNestedField, Program, Mix, readProgram, readMix, readEditProgram, readEditMix } from './models.js';
+import { getNestedField, Program, Mix, Effect, readProgram, readMix, readEditProgram, readEditMix } from './models.js';
 import { putProgram, putMix, getAllNames, hasData } from './store.js';
 
 const deviceSelect = document.getElementById('device-select');
@@ -853,6 +853,14 @@ const DRUM_PARAMS = [
 
 const ROM_ID_LABELS = ['QS+/S4+', 'QS', 'Reserved', 'Reserved'];
 
+const EFFECT_CONFIG_LABELS = [
+  '0: 4-Sends, 1 Reverb',
+  '1: 4-Sends, 2 Reverb',
+  '2: 4-Sends, 1 Lezlie',
+  '3: 2-Sends, with EQ',
+  '4: Overdrive + Lezlie',
+];
+
 function renderSectionBlock(label, rowsHtml) {
   return `<div class="prog-info-section-block"><table class="globals-table"><tbody>` +
     `<tr class="prog-info-subsection"><td colspan="2">${escapeHTML(label)}</td></tr>` +
@@ -904,6 +912,54 @@ function renderDrumSound(drums) {
   return html;
 }
 
+function camelToTitle(s) {
+  return s.replace(/([a-z])([A-Z])/g, '$1 $2')
+          .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+          .replace(/^./, c => c.toUpperCase());
+}
+
+function renderEffect(effect) {
+  let html = renderSectionBlock('Configuration',
+    `<tr><td>Type</td><td>${EFFECT_CONFIG_LABELS[effect.configuration] || String(effect.configuration)}</td></tr>`);
+
+  for (let s = 1; s <= 4; s++) {
+    const send = effect[`send${s}`];
+    if (!send) continue;
+    for (const [blockName, block] of Object.entries(send)) {
+      if (typeof block !== 'object' || block === null) continue;
+      let rows = '';
+      for (const [key, val] of Object.entries(block)) {
+        if (val === undefined) continue;
+        rows += `<tr><td>${escapeHTML(camelToTitle(key))}</td><td>${escapeHTML(String(val))}</td></tr>`;
+      }
+      if (rows) {
+        html += renderSectionBlock(`Send ${s} ${camelToTitle(blockName)}`, rows);
+      }
+    }
+  }
+
+  if (effect.eq && typeof effect.eq === 'object') {
+    let rows = '';
+    for (const [key, val] of Object.entries(effect.eq)) {
+      if (val === undefined) continue;
+      rows += `<tr><td>${escapeHTML(camelToTitle(key))}</td><td>${escapeHTML(String(val))}</td></tr>`;
+    }
+    if (rows) html += renderSectionBlock('Equalizer', rows);
+  }
+
+  if (effect.mod && typeof effect.mod === 'object') {
+    let rows = '';
+    for (const [key, val] of Object.entries(effect.mod)) {
+      if (val === undefined) continue;
+      const displayVal = key.startsWith('level') ? fmtSigned(-99)(val) : String(val);
+      rows += `<tr><td>${escapeHTML(camelToTitle(key))}</td><td>${escapeHTML(displayVal)}</td></tr>`;
+    }
+    if (rows) html += renderSectionBlock('Modulation', rows);
+  }
+
+  return html;
+}
+
 function renderProgInfo(program) {
   // Common section
   let html = '<table class="globals-table"><tbody>';
@@ -920,6 +976,7 @@ function renderProgInfo(program) {
     const disabled = !snd.enabled ? ' disabled' : '';
     html += `<button class="prog-info-tab${active}" data-tab="${s}"${disabled}>${label}</button>`;
   }
+  html += `<button class="prog-info-tab" data-tab="fx">Effects</button>`;
   html += '</div>';
 
   // Tab panels
@@ -941,6 +998,12 @@ function renderProgInfo(program) {
     }
     html += '</div>';
   }
+
+  // Effects panel
+  html += `<div class="prog-info-panel" data-panel="fx">`;
+  html += '<div class="prog-info-sections">';
+  html += renderEffect(program.effect);
+  html += '</div></div>';
 
   progInfoBody.innerHTML = html;
 
@@ -1187,9 +1250,11 @@ function parseSyxFile(arrayBuffer) {
           oldMixes.push({ num, name: m.name, mix: m });
           break;
         }
-        case 0x06: // User Effects
-          effects.push({ num });
+        case 0x06: { // User Effects
+          const eff = Effect.fromSysex(msg);
+          effects.push({ num, configuration: eff.configuration, effect: eff });
           break;
+        }
         case 0x0A: { // Global Data
           const packed = msg.slice(7, msg.length - 1);
           global = unpackQSData(packed);
@@ -1249,9 +1314,9 @@ function renderSyxViewer(parsed, filename) {
         }
         html += '</tbody></table>';
       } else if (tabs[t].id === 'effects') {
-        html += '<table class="globals-table"><thead><tr><th>#</th></tr></thead><tbody>';
+        html += '<table class="globals-table"><thead><tr><th>#</th><th>Config</th></tr></thead><tbody>';
         for (const e of parsed.effects) {
-          html += `<tr><td>${String(e.num).padStart(3, '0')}</td></tr>`;
+          html += `<tr><td>${String(e.num).padStart(3, '0')}</td><td>${e.configuration}</td></tr>`;
         }
         html += '</tbody></table>';
       } else if (tabs[t].id === 'global') {

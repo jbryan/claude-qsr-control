@@ -1,4 +1,4 @@
-import { unpackQSData, packQSData, requestUserProgram, requestEditProgram, requestNewMix, sendUserProgram, sendNewMix } from './midi.js';
+import { unpackQSData, packQSData, requestUserProgram, requestEditProgram, requestNewMix, sendUserProgram, sendNewMix, requestUserEffects, sendUserEffects, requestEditEffects, sendEditEffects } from './midi.js';
 
 // --- Bit helpers ---
 
@@ -429,11 +429,384 @@ export class Mix {
   }
 }
 
+// --- Effect class ---
+
+// Bit address conversion from the QS spec: "MSB:bit-LSB:bit" notation.
+// Flat bit offset = LSB_byte * 8 + LSB_bit.
+// Num bits = (MSB_byte * 8 + MSB_bit) - flat_offset + 1.
+
+// Modulation fields: same bit positions across all 5 configurations.
+const EFFECT_MOD_FIELDS = [
+  ['mod.source1',      470, 4],  // 59:1-58:6
+  ['mod.destination1', 474, 6],  // 59:7-59:2
+  ['mod.level1',       480, 8],  // 60:7-60:0
+  ['mod.source2',      488, 4],  // 61:3-61:0
+  ['mod.destination2', 492, 6],  // 62:1-61:4
+  ['mod.level2',       498, 8],  // 63:1-62:2
+];
+
+// --- Reusable block builders ---
+// Each returns an array of [fieldPath, bitOffset, numBits] entries.
+
+// Pitch block: 3-bit type (configs 0, 3 sends 1-2)
+// Variant fields: for type 0-3 (chorus/flange): speed, shape, depth, feedback.
+// For type 4 (detune): speed+shape bits form 8-bit detune value.
+// For type 5 (resonator): speed=tuning, depth=decay, feedback is spare.
+function buildPitchFields3(prefix, baseOff) {
+  return [
+    [`${prefix}.type`,     baseOff,      3],
+    [`${prefix}.speed`,    baseOff + 3,  7],
+    [`${prefix}.shape`,    baseOff + 10, 1],
+    [`${prefix}.depth`,    baseOff + 11, 7],
+    [`${prefix}.feedback`, baseOff + 18, 7],
+    [`${prefix}.mix`,      baseOff + 25, 7],
+  ];
+}
+
+// Full delay block with type, input, stereo params (configs 0, 3, 4 sends 1-2)
+// Variant fields: for stereo delay, param1=rightTime10ms, param2=rightTime1ms,
+// param3=rightFeedback, feedback=leftFeedback. For mono/ping-pong, these are spare.
+function buildFullDelayFields(prefix, baseOff) {
+  return [
+    [`${prefix}.type`,     baseOff,      2],
+    [`${prefix}.input`,    baseOff + 2,  8],
+    [`${prefix}.time10ms`, baseOff + 10, 7],
+    [`${prefix}.time1ms`,  baseOff + 17, 4],
+    [`${prefix}.param1`,   baseOff + 21, 6],
+    [`${prefix}.param2`,   baseOff + 27, 4],
+    [`${prefix}.feedback`, baseOff + 31, 7],
+    [`${prefix}.param3`,   baseOff + 38, 7],
+    [`${prefix}.mix`,      baseOff + 45, 7],
+  ];
+}
+
+// Full reverb block: type + 14 params (configs 0, 2, 3 send 1; configs 1, 4 similar)
+function buildFullReverbFields(prefix, offsets) {
+  return [
+    [`${prefix}.type`,         offsets.type,         4],
+    [`${prefix}.input1`,       offsets.input1,       1],
+    [`${prefix}.input2`,       offsets.input2,       2],
+    [`${prefix}.balance`,      offsets.balance,      8],
+    [`${prefix}.inputLevel`,   offsets.inputLevel,   7],
+    [`${prefix}.predelay10ms`, offsets.predelay10ms, 5],
+    [`${prefix}.predelay1ms`,  offsets.predelay1ms,  4],
+    [`${prefix}.inputPremix`,  offsets.inputPremix,  8],
+    [`${prefix}.inputFilter`,  offsets.inputFilter,  7],
+    [`${prefix}.decay`,        offsets.decay,        7],
+    [`${prefix}.diffusion`,    offsets.diffusion,    7],
+    [`${prefix}.density`,      offsets.density,      7],
+    [`${prefix}.lowDecay`,     offsets.lowDecay,     7],
+    [`${prefix}.highDecay`,    offsets.highDecay,    7],
+    [`${prefix}.mix`,          offsets.mix,          7],
+  ];
+}
+
+// Partial reverb: input routing + balance + level (config 0 sends 2-3)
+function buildPartialReverbFields(prefix, offsets) {
+  return [
+    [`${prefix}.input1`,     offsets.input1,     1],
+    [`${prefix}.input2`,     offsets.input2,     2],
+    [`${prefix}.balance`,    offsets.balance,    8],
+    [`${prefix}.inputLevel`, offsets.inputLevel, 7],
+  ];
+}
+
+// --- Shared config 0 block fragments ---
+// These are used by configs 0, 2, and 3 which share most of config 0's layout.
+
+const CONFIG0_PITCH_SEND1 = buildPitchFields3('send1.pitch', 74);
+
+const CONFIG0_DELAY_SEND1 = buildFullDelayFields('send1.delay', 106);
+
+const CONFIG0_REVERB_SEND1 = buildFullReverbFields('send1.reverb', {
+  type: 158, input1: 162, input2: 163, balance: 165, inputLevel: 173,
+  predelay10ms: 180, predelay1ms: 185, inputPremix: 189, inputFilter: 197,
+  decay: 204, diffusion: 211, density: 218, lowDecay: 225, highDecay: 232, mix: 239,
+});
+
+const CONFIG0_PITCH_SEND2 = buildPitchFields3('send2.pitch', 246);
+
+const CONFIG0_DELAY_SEND2 = buildFullDelayFields('send2.delay', 278);
+
+const CONFIG0_REVERB_SEND2 = buildPartialReverbFields('send2.reverb', {
+  input1: 330, input2: 331, balance: 333, inputLevel: 341,
+});
+
+// Send 3 pitch: only 2-bit type (0=chorus, 1=flange, 2=resonator; no detune)
+const CONFIG0_PITCH_SEND3 = [
+  ['send3.pitch.type',     348, 2],
+  ['send3.pitch.speed',    350, 7],
+  ['send3.pitch.shape',    357, 1],
+  ['send3.pitch.depth',    358, 7],
+  ['send3.pitch.feedback', 365, 7],
+  ['send3.pitch.mix',      372, 7],
+];
+
+// Send 3 delay: mono only (no type field)
+const CONFIG0_DELAY_SEND3 = [
+  ['send3.delay.input',    379, 8],
+  ['send3.delay.time10ms', 387, 7],
+  ['send3.delay.time1ms',  394, 4],
+  ['send3.delay.feedback', 398, 7],
+  ['send3.delay.mix',      405, 7],
+];
+
+const CONFIG0_REVERB_SEND3 = buildPartialReverbFields('send3.reverb', {
+  input1: 412, input2: 413, balance: 415, inputLevel: 423,
+});
+
+// Send 4 delay: simplified (no type, no input)
+const CONFIG0_DELAY_SEND4 = [
+  ['send4.delay.time10ms', 430, 7],
+  ['send4.delay.time1ms',  437, 4],
+  ['send4.delay.feedback', 441, 7],
+  ['send4.delay.mix',      448, 7],
+];
+
+// Send 4 reverb: minimal (balance + level only)
+const CONFIG0_REVERB_SEND4 = [
+  ['send4.reverb.balance',    455, 8],
+  ['send4.reverb.inputLevel', 463, 7],
+];
+
+// Params 26-81 of config 0 (reverb send 1 through reverb send 4)
+const CONFIG0_PARAMS_26_TO_81 = [
+  ...CONFIG0_REVERB_SEND1,
+  ...CONFIG0_PITCH_SEND2,
+  ...CONFIG0_DELAY_SEND2,
+  ...CONFIG0_REVERB_SEND2,
+  ...CONFIG0_PITCH_SEND3,
+  ...CONFIG0_DELAY_SEND3,
+  ...CONFIG0_REVERB_SEND3,
+  ...CONFIG0_DELAY_SEND4,
+  ...CONFIG0_REVERB_SEND4,
+];
+
+// --- Configuration 0: 4-sends, 1 reverb ---
+const EFFECT_CONFIG0_FIELDS = [
+  ...CONFIG0_PITCH_SEND1,
+  ...CONFIG0_DELAY_SEND1,
+  ...CONFIG0_PARAMS_26_TO_81,
+];
+
+// --- Configuration 1: 4-sends, 2 reverb ---
+const EFFECT_CONFIG1_FIELDS = [
+  // DELAY SEND 1
+  ['send1.delay.time10ms', 74,  7],  // 10:0-9:2
+  ['send1.delay.time1ms',  81,  4],  // 10:4-10:1
+  ['send1.delay.feedback', 85,  7],  // 11:3-10:5
+  ['send1.delay.mix',      92,  7],  // 12:2-11:4
+  // PITCH SEND 1
+  ['send1.pitch.inputLevel', 99,  7],  // 13:1-12:3
+  ['send1.pitch.type',      106, 1],  // 13:2
+  ['send1.pitch.speed',     107, 7],  // 14:1-13:3
+  ['send1.pitch.shape',     114, 1],  // 14:2
+  ['send1.pitch.depth',     115, 7],  // 15:1-14:3
+  ['send1.pitch.mix',       122, 7],  // 16:0-15:2
+  // REVERB SEND 1 (no input routing/balance in config 1)
+  ['send1.reverb.type',         129, 4],  // 16:4-16:1
+  ['send1.reverb.inputLevel',   133, 7],  // 17:3-16:5
+  ['send1.reverb.predelay10ms', 140, 5],  // 18:0-17:4
+  ['send1.reverb.predelay1ms',  145, 4],  // 18:4-18:1
+  ['send1.reverb.inputPremix',  149, 8],  // 19:4-18:5
+  ['send1.reverb.inputFilter',  157, 7],  // 20:3-19:5
+  ['send1.reverb.decay',        164, 7],  // 21:2-20:4
+  ['send1.reverb.diffusion',    171, 7],  // 22:1-21:3
+  ['send1.reverb.density',      178, 7],  // 23:0-22:2
+  ['send1.reverb.lowDecay',     185, 7],  // 23:7-23:1
+  ['send1.reverb.highDecay',    192, 7],  // 24:6-24:0
+  ['send1.reverb.mix',          199, 7],  // 25:5-24:7
+  // REVERB SEND 2 (input level only)
+  ['send2.reverb.inputLevel', 206, 7],  // 26:4-25:6
+  // PITCH SEND 3 (speed, shape, depth only - no type, no mix)
+  ['send3.pitch.speed', 213, 7],  // 27:3-26:5
+  ['send3.pitch.shape', 220, 1],  // 27:4
+  ['send3.pitch.depth', 221, 7],  // 28:3-27:5
+  // REVERB SEND 3 (no input routing/balance in config 1)
+  ['send3.reverb.type',         228, 4],  // 28:7-28:4
+  ['send3.reverb.inputLevel',   232, 7],  // 29:6-29:0
+  ['send3.reverb.predelay10ms', 239, 5],  // 30:3-29:7
+  ['send3.reverb.predelay1ms',  244, 4],  // 30:7-30:4
+  ['send3.reverb.inputPremix',  248, 8],  // 31:7-31:0
+  ['send3.reverb.inputFilter',  256, 7],  // 32:6-32:0
+  ['send3.reverb.decay',        263, 7],  // 33:5-32:7
+  ['send3.reverb.diffusion',    270, 7],  // 34:4-33:6
+  ['send3.reverb.density',      277, 7],  // 35:3-34:5
+  ['send3.reverb.lowDecay',     284, 7],  // 36:2-35:4
+  ['send3.reverb.highDecay',    291, 7],  // 37:1-36:3
+  ['send3.reverb.mix',          298, 7],  // 38:0-37:2
+  // REVERB SEND 4 (input level only)
+  ['send4.reverb.inputLevel', 305, 7],  // 38:7-38:1
+];
+
+// --- Configuration 2: 4-sends, 1 lezlie ---
+// Send 1 replaces pitch with lezlie; delay is simplified (no type).
+// Params 26-81 identical to config 0.
+const EFFECT_CONFIG2_FIELDS = [
+  // LEZLIE SEND 1 (replaces pitch)
+  ['send1.lezlie.speed', 77,  7],  // 10:3-9:5  (value 0-1, stored in 7 bits)
+  ['send1.lezlie.motor', 84,  1],  // 10:4
+  ['send1.lezlie.horn',  85,  7],  // 11:3-10:5 (7-bit signed: 0-6 positive, 122-127 negative)
+  ['send1.lezlie.mix',   99,  7],  // 13:1-12:3
+  // DELAY SEND 1 (no type; input is unsigned 0-99 in config 2)
+  ['send1.delay.input',    108, 8],  // 14:3-13:4
+  ['send1.delay.time10ms', 116, 7],  // 15:2-14:4
+  ['send1.delay.time1ms',  123, 4],  // 15:6-15:3
+  ['send1.delay.feedback', 137, 7],  // 17:7-17:1
+  ['send1.delay.mix',      151, 7],  // 19:5-18:7
+  // PARAMS 26-81: identical to config 0
+  ...CONFIG0_PARAMS_26_TO_81,
+];
+
+// --- Configuration 3: 2-sends, with EQ ---
+// Params 11-56 identical to config 0 (send 1 pitch/delay/reverb + send 2 pitch/delay).
+// Send 2 reverb is partial (same bit positions as config 0).
+// EQ section replaces sends 3-4.
+const CONFIG3_EQ_FIELDS = [
+  ['eq.loFreq', 350, 3],  // 44:0-43:6
+  ['eq.loGain', 358, 4],  // 45:1-44:6
+  ['eq.hiFreq', 365, 3],  // 45:7-45:5
+  ['eq.hiGain', 372, 4],  // 46:7-46:4
+];
+
+const EFFECT_CONFIG3_FIELDS = [
+  ...CONFIG0_PITCH_SEND1,
+  ...CONFIG0_DELAY_SEND1,
+  ...CONFIG0_REVERB_SEND1,
+  ...CONFIG0_PITCH_SEND2,
+  ...CONFIG0_DELAY_SEND2,
+  ...CONFIG0_REVERB_SEND2,
+  ...CONFIG3_EQ_FIELDS,
+];
+
+// --- Configuration 4: Overdrive, Chorus, Delay, Reverb, Lezlie ---
+// Everything on send 1; fields scattered across the byte array.
+const EFFECT_CONFIG4_FIELDS = [
+  // PITCH SEND 1 (2-bit type: 0=chorus, 1=flange, 2=resonator)
+  ['send1.pitch.type',         74,  2],   // 9:3-9:2
+  ['send1.pitch.speed',        77,  7],   // 10:3-9:5
+  ['send1.pitch.shape',        84,  1],   // 10:4
+  ['send1.pitch.depth',        85,  7],   // 11:3-10:5
+  ['send1.pitch.feedback',     92,  7],   // 12:2-11:4
+  ['send1.pitch.mix',          99,  7],   // 13:1-12:3
+  ['send1.pitch.input2',       163, 2],   // 20:4-20:3
+  ['send1.pitch.inputBalance', 280, 8],   // 35:7-35:0
+  // LEZLIE SEND 1 (scattered bit positions)
+  ['send1.lezlie.input1',       331, 1],  // 41:3
+  ['send1.lezlie.input2',       323, 4],  // 40:6-40:3
+  ['send1.lezlie.inputBalance', 333, 8],  // 42:4-41:5
+  ['send1.lezlie.speed',        309, 1],  // 38:5
+  ['send1.lezlie.motor',        330, 1],  // 41:2
+  ['send1.lezlie.horn',         316, 7],  // 40:2-39:4
+  ['send1.lezlie.mix',          249, 7],  // 31:7-31:1
+  // DELAY SEND 1 (with type and extra routing)
+  ['send1.delay.type',         106, 2],   // 13:3-13:2
+  ['send1.delay.inputBalance', 108, 8],   // 14:3-13:4
+  ['send1.delay.time10ms',     116, 7],   // 15:2-14:4
+  ['send1.delay.time1ms',      123, 4],   // 15:6-15:3
+  ['send1.delay.param1',       127, 6],   // 16:4-15:7
+  ['send1.delay.param2',       133, 4],   // 17:0-16:5
+  ['send1.delay.feedback',     137, 7],   // 17:7-17:1
+  ['send1.delay.param3',       144, 7],   // 18:6-18:0
+  ['send1.delay.mix',          151, 7],   // 19:5-18:7
+  ['send1.delay.input2',       288, 3],   // 36:2-36:0
+  // REVERB SEND 1 (full, with scattered input2)
+  ['send1.reverb.type',         158, 4],  // 20:1-19:6
+  ['send1.reverb.input1',       162, 1],  // 20:2
+  ['send1.reverb.input2',       246, 3],  // 31:0-30:6
+  ['send1.reverb.balance',      165, 8],  // 21:4-20:5
+  ['send1.reverb.inputLevel',   173, 7],  // 22:3-21:5
+  ['send1.reverb.predelay10ms', 180, 5],  // 23:0-22:4
+  ['send1.reverb.predelay1ms',  185, 4],  // 23:4-23:1
+  ['send1.reverb.inputPremix',  189, 8],  // 24:4-23:5
+  ['send1.reverb.inputFilter',  197, 7],  // 25:3-24:5
+  ['send1.reverb.decay',        204, 7],  // 26:2-25:4
+  ['send1.reverb.diffusion',    211, 7],  // 27:1-26:3
+  ['send1.reverb.density',      218, 7],  // 28:0-27:2
+  ['send1.reverb.lowDecay',     225, 7],  // 28:7-28:1
+  ['send1.reverb.highDecay',    232, 7],  // 29:6-29:0
+  ['send1.reverb.mix',          239, 7],  // 30:5-29:7
+  // OVERDRIVE SEND 1
+  ['send1.overdrive.type',       357, 1],  // 44:5
+  ['send1.overdrive.balance',    379, 8],  // 48:2-47:3
+  ['send1.overdrive.threshold',  398, 7],  // 50:4-49:6
+  ['send1.overdrive.brightness', 387, 7],  // 49:1-48:3
+  // EQUALIZER
+  ...CONFIG3_EQ_FIELDS,
+];
+
+// Per-configuration field lookup
+const EFFECT_CONFIG_FIELDS = [
+  EFFECT_CONFIG0_FIELDS,
+  EFFECT_CONFIG1_FIELDS,
+  EFFECT_CONFIG2_FIELDS,
+  EFFECT_CONFIG3_FIELDS,
+  EFFECT_CONFIG4_FIELDS,
+];
+
+export class Effect {
+  constructor() {
+    this.configuration = 0;
+    this.mod = {};
+  }
+
+  static fromUnpacked(unpacked) {
+    const effect = new Effect();
+
+    effect.configuration = extractBits(unpacked, 70, 4);
+
+    const configFields = EFFECT_CONFIG_FIELDS[effect.configuration] || EFFECT_CONFIG0_FIELDS;
+    for (const [path, bitOffset, numBits] of configFields) {
+      const val = extractBits(unpacked, bitOffset, numBits);
+      setNestedField(effect, path, val);
+    }
+
+    for (const [path, bitOffset, numBits] of EFFECT_MOD_FIELDS) {
+      const val = extractBits(unpacked, bitOffset, numBits);
+      setNestedField(effect, path, val);
+    }
+
+    return effect;
+  }
+
+  static fromSysex(response) {
+    const packed = response.slice(7, response.length - 1);
+    const unpacked = unpackQSData(packed);
+    return Effect.fromUnpacked(unpacked);
+  }
+
+  toUnpacked() {
+    const unpacked = new Array(65).fill(0);
+
+    setBits(unpacked, 70, 4, this.configuration);
+
+    const configFields = EFFECT_CONFIG_FIELDS[this.configuration] || EFFECT_CONFIG0_FIELDS;
+    for (const [path, bitOffset, numBits] of configFields) {
+      const val = getNestedField(this, path);
+      if (val !== undefined) {
+        setBits(unpacked, bitOffset, numBits, val);
+      }
+    }
+
+    for (const [path, bitOffset, numBits] of EFFECT_MOD_FIELDS) {
+      const val = getNestedField(this, path);
+      if (val !== undefined) {
+        setBits(unpacked, bitOffset, numBits, val);
+      }
+    }
+
+    return unpacked;
+  }
+}
+
 // --- Device I/O functions ---
 
 export async function readProgram(output, input, programNum) {
   const response = await requestUserProgram(output, input, programNum);
-  return Program.fromSysex(response);
+  const program = Program.fromSysex(response);
+  const effectResponse = await requestUserEffects(output, input, programNum);
+  program.effect = Effect.fromSysex(effectResponse);
+  return program;
 }
 
 export async function writeProgram(output, programNum, program) {
@@ -455,10 +828,35 @@ export async function writeMix(output, mixNum, mix) {
 
 export async function readEditProgram(output, input) {
   const response = await requestEditProgram(output, input, 0);
-  return Program.fromSysex(response);
+  const program = Program.fromSysex(response);
+  const effectResponse = await requestEditEffects(output, input, 0);
+  program.effect = Effect.fromSysex(effectResponse);
+  return program;
 }
 
 export async function readEditMix(output, input) {
   const response = await requestNewMix(output, input, 100);
   return Mix.fromSysex(response);
+}
+
+export async function readEffect(output, input, effectNum) {
+  const response = await requestUserEffects(output, input, effectNum);
+  return Effect.fromSysex(response);
+}
+
+export async function writeEffect(output, effectNum, effect) {
+  const unpacked = effect.toUnpacked();
+  const packed = packQSData(unpacked);
+  sendUserEffects(output, effectNum, new Uint8Array(packed));
+}
+
+export async function readEditEffect(output, input, editNum) {
+  const response = await requestEditEffects(output, input, editNum);
+  return Effect.fromSysex(response);
+}
+
+export async function writeEditEffect(output, editNum, effect) {
+  const unpacked = effect.toUnpacked();
+  const packed = packQSData(unpacked);
+  sendEditEffects(output, editNum, new Uint8Array(packed));
 }

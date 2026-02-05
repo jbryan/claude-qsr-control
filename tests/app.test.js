@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import { MockMIDIAccess, MockMIDIInput, MockMIDIOutput, setMockMIDIAccess } from './setup.js';
 import { putProgram, putMix, clearAll } from '../public/js/store.js';
-import { Program, Mix, encodeProgName, encodeMixName, setBits } from '../public/js/models.js';
+import { Program, Mix, Effect, encodeProgName, encodeMixName, setBits } from '../public/js/models.js';
 
 let mockAccess;
 let qsrInput;
@@ -133,6 +133,12 @@ function buildSysexReply(opcode, num, unpacked) {
   return response;
 }
 
+function makeMinimalEffect(config = 0) {
+  const unpacked = new Array(65).fill(0);
+  setBits(unpacked, 70, 4, config);
+  return Effect.fromUnpacked(unpacked);
+}
+
 function autoReplyIdentity(output, input) {
   output.send = jest.fn(function (data) {
     const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -150,6 +156,18 @@ function autoReplyIdentity(output, input) {
     if (arr[0] === 0xF0 && arr[5] === 0x03) {
       const prog = makeMinimalProgram('EditBuf');
       setTimeout(() => input.receive(buildSysexReply(0x02, 0, prog.toUnpacked())), 0);
+    }
+    // Reply to user effects request (opcode 0x07)
+    if (arr[0] === 0xF0 && arr[5] === 0x07) {
+      const num = arr[6];
+      const eff = makeMinimalEffect();
+      setTimeout(() => input.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+    }
+    // Reply to edit effects request (opcode 0x09)
+    if (arr[0] === 0xF0 && arr[5] === 0x09) {
+      const num = arr[6];
+      const eff = makeMinimalEffect();
+      setTimeout(() => input.receive(buildSysexReply(0x08, num, eff.toUnpacked())), 0);
     }
     // Reply to mix dump request (opcode 0x0F)
     if (arr[0] === 0xF0 && arr[5] === 0x0F) {
@@ -1314,6 +1332,20 @@ describe('edit buffer button', () => {
         setTimeout(() => qsrInput.receive(buildSysexReply(0x02, 0, prog.toUnpacked())), 0);
         return;
       }
+      // Reply to user effects request (opcode 0x07)
+      if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        const num = arr[6];
+        const eff = makeMinimalEffect();
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+        return;
+      }
+      // Reply to edit effects request (opcode 0x09)
+      if (arr[0] === 0xF0 && arr[5] === 0x09) {
+        const num = arr[6];
+        const eff = makeMinimalEffect();
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x08, num, eff.toUnpacked())), 0);
+        return;
+      }
       // Reply to mix dump request (opcode 0x0F)
       if (arr[0] === 0xF0 && arr[5] === 0x0F) {
         const num = arr[6];
@@ -1334,5 +1366,429 @@ describe('edit buffer button', () => {
     expect(modal.classList.contains('hidden')).toBe(false);
     const body = document.getElementById('mix-info-body');
     expect(body.textContent).toContain('EditMixBuf');
+  });
+});
+
+describe('program info dialog', () => {
+  test('prog-info-btn opens modal with program data', async () => {
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('prog-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+    const body = document.getElementById('prog-info-body');
+    expect(body.textContent).toContain('User 000');
+  });
+
+  test('renders 5 tabs including Effects', async () => {
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const tabs = document.querySelectorAll('.prog-info-tab');
+    expect(tabs).toHaveLength(5);
+    expect(tabs[0].textContent).toBe('Sound 1');
+    expect(tabs[1].textContent).toBe('Sound 2');
+    expect(tabs[2].textContent).toBe('Sound 3');
+    expect(tabs[3].textContent).toBe('Sound 4');
+    expect(tabs[4].textContent).toBe('Effects');
+  });
+
+  test('tab click switches active panel', async () => {
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const tabs = document.querySelectorAll('.prog-info-tab');
+    const panels = document.querySelectorAll('.prog-info-panel');
+
+    // Sound 1 is active by default
+    expect(tabs[0].classList.contains('active')).toBe(true);
+    expect(panels[0].classList.contains('active')).toBe(true);
+
+    // Click Effects tab
+    tabs[4].click();
+    expect(tabs[4].classList.contains('active')).toBe(true);
+    expect(panels[4].classList.contains('active')).toBe(true);
+    expect(tabs[0].classList.contains('active')).toBe(false);
+    expect(panels[0].classList.contains('active')).toBe(false);
+  });
+
+  test('Effects tab shows configuration', async () => {
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const tabs = document.querySelectorAll('.prog-info-tab');
+    tabs[4].click();
+
+    const fxPanel = document.querySelector('.prog-info-panel[data-panel="fx"]');
+    expect(fxPanel.textContent).toContain('Configuration');
+    expect(fxPanel.textContent).toContain('4-Sends, 1 Reverb');
+  });
+
+  test('disabled sounds show disabled message', async () => {
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    // Sound 2 is disabled in makeMinimalProgram
+    const tabs = document.querySelectorAll('.prog-info-tab');
+    expect(tabs[1].disabled).toBe(true);
+
+    const panel2 = document.querySelector('.prog-info-panel[data-panel="1"]');
+    expect(panel2.textContent).toContain('Disabled');
+  });
+
+  test('close button closes prog-info-modal', async () => {
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('prog-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    document.getElementById('prog-info-close').click();
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+
+  test('Escape closes prog-info-modal', async () => {
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('prog-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+
+  test('backdrop click closes prog-info-modal', async () => {
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('prog-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    modal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+
+  test('shows error when program request fails', async () => {
+    await loadApp();
+
+    // Override send to not reply to program requests
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+      // Don't reply to program or effect requests — will timeout
+    });
+
+    document.getElementById('prog-info-btn').click();
+    // Advance past the 5s timeout
+    await jest.advanceTimersByTimeAsync(6000);
+
+    const body = document.getElementById('prog-info-body');
+    expect(body.textContent).toContain('Failed');
+  });
+
+  test('renders drum sound when sound is in drum mode', async () => {
+    // Override auto-reply to return a drum-mode program
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x01) {
+        const num = arr[6];
+        const unpacked = new Array(350).fill(0);
+        encodeProgName(unpacked, `DrumProg`);
+        const baseBitOff = 10 * 8;
+        setBits(unpacked, baseBitOff, 1, 1);       // isDrum = true
+        setBits(unpacked, baseBitOff + 81 * 8, 1, 1); // drum enabled
+        const prog = Program.fromUnpacked(unpacked);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        const num = arr[6];
+        const eff = makeMinimalEffect();
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+      }
+    });
+
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const body = document.getElementById('prog-info-body');
+    expect(body.textContent).toContain('DrumProg');
+    expect(body.textContent).toContain('Drum 1');
+  });
+
+  test('Effects tab shows mod and EQ for config 3', async () => {
+    // Override to return effect config 3 (with EQ)
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x01) {
+        const num = arr[6];
+        const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        const num = arr[6];
+        const eff = makeMinimalEffect(3);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+      }
+    });
+
+    await loadApp();
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const tabs = document.querySelectorAll('.prog-info-tab');
+    tabs[4].click();
+
+    const fxPanel = document.querySelector('.prog-info-panel[data-panel="fx"]');
+    expect(fxPanel.textContent).toContain('2-Sends, with EQ');
+    expect(fxPanel.textContent).toContain('Equalizer');
+    expect(fxPanel.textContent).toContain('Modulation');
+  });
+});
+
+describe('MIDI modal', () => {
+  test('Escape closes MIDI modal', async () => {
+    await loadApp();
+
+    const modal = document.getElementById('midi-modal');
+    document.getElementById('midi-btn').click();
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+});
+
+describe('mix info dialog', () => {
+  test('prog-info-btn in mix mode opens mix-info-modal', async () => {
+    await loadApp();
+    switchMode('mix');
+    await jest.advanceTimersByTimeAsync(500);
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('mix-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+    const body = document.getElementById('mix-info-body');
+    expect(body.textContent).toContain('Mix Name');
+    expect(body.textContent).toContain('User Mix 0');
+  });
+
+  test('mix info renders 16 channel tabs', async () => {
+    // Create a mix with 2 enabled channels to test tab switching
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x01) {
+        const num = arr[6];
+        const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        const num = arr[6];
+        const eff = makeMinimalEffect();
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x0F) {
+        const num = arr[6];
+        // Build mix with ch1 and ch2 enabled
+        const unpacked = new Array(138).fill(0);
+        encodeMixName(unpacked, 'TabMix');
+        const baseBit = 10 * 8;
+        setBits(unpacked, baseBit + 11, 1, 1);     // ch1 enable
+        setBits(unpacked, baseBit + 8 * 8 + 3, 1, 1); // ch2 enable
+        const mix = Mix.fromUnpacked(unpacked);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x0E, num, mix.toUnpacked())), 0);
+      }
+    });
+
+    await loadApp();
+    switchMode('mix');
+    await jest.advanceTimersByTimeAsync(500);
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const tabs = document.querySelectorAll('#mix-info-body .prog-info-tab');
+    expect(tabs).toHaveLength(16);
+    expect(tabs[0].textContent).toBe('Ch 1');
+    expect(tabs[15].textContent).toBe('Ch 16');
+  });
+
+  test('close button closes mix-info-modal', async () => {
+    await loadApp();
+    switchMode('mix');
+    await jest.advanceTimersByTimeAsync(500);
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('mix-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    document.getElementById('mix-info-close').click();
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+
+  test('Escape closes mix-info-modal', async () => {
+    await loadApp();
+    switchMode('mix');
+    await jest.advanceTimersByTimeAsync(500);
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('mix-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+
+  test('backdrop click closes mix-info-modal', async () => {
+    await loadApp();
+    switchMode('mix');
+    await jest.advanceTimersByTimeAsync(500);
+
+    document.getElementById('prog-info-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('mix-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    modal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(modal.classList.contains('hidden')).toBe(true);
+  });
+
+  test('edit buffer failure in prog mode shows error', async () => {
+    await loadApp();
+
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+    });
+
+    document.getElementById('edit-buf-btn').click();
+    await jest.advanceTimersByTimeAsync(6000);
+
+    const body = document.getElementById('prog-info-body');
+    expect(body.textContent).toContain('Failed');
+  });
+
+  test('edit buffer failure in mix mode shows error', async () => {
+    await loadApp();
+    switchMode('mix');
+    await jest.advanceTimersByTimeAsync(500);
+
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+    });
+
+    document.getElementById('edit-buf-btn').click();
+    await jest.advanceTimersByTimeAsync(6000);
+
+    const body = document.getElementById('mix-info-body');
+    expect(body.textContent).toContain('Failed');
+  });
+});
+
+describe('SysEx file viewer', () => {
+  function buildSyxFile(messages) {
+    const totalLen = messages.reduce((sum, m) => sum + m.length, 0);
+    const buf = new ArrayBuffer(totalLen);
+    const view = new Uint8Array(buf);
+    let offset = 0;
+    for (const m of messages) {
+      view.set(m, offset);
+      offset += m.length;
+    }
+    return buf;
+  }
+
+  function triggerFileLoad(arrayBuffer, filename = 'test.syx') {
+    const input = document.getElementById('syx-file-input');
+    const file = new File([arrayBuffer], filename, { type: 'application/octet-stream' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    input.dispatchEvent(new Event('change'));
+  }
+
+  test('opens viewer with program data from .syx file', async () => {
+    await loadApp();
+
+    const prog = makeMinimalProgram('SyxProg');
+    const progMsg = buildSysexReply(0x00, 5, prog.toUnpacked());
+    const buf = buildSyxFile([progMsg]);
+
+    triggerFileLoad(buf);
+    await jest.advanceTimersByTimeAsync(500);
+
+    const body = document.getElementById('syx-viewer-body');
+    expect(body.textContent).toContain('SyxProg');
+  });
+
+  test('opens viewer with mix and effect data', async () => {
+    await loadApp();
+
+    const mix = makeMinimalMix('SyxMix');
+    const mixMsg = buildSysexReply(0x0E, 10, mix.toUnpacked());
+    const eff = makeMinimalEffect(2);
+    const effMsg = buildSysexReply(0x06, 10, eff.toUnpacked());
+    const buf = buildSyxFile([mixMsg, effMsg]);
+
+    triggerFileLoad(buf);
+    await jest.advanceTimersByTimeAsync(500);
+
+    const body = document.getElementById('syx-viewer-body');
+    expect(body.textContent).toContain('SyxMix');
+  });
+
+  test('close button closes SysEx viewer', async () => {
+    await loadApp();
+
+    const prog = makeMinimalProgram('CloseTest');
+    const buf = buildSyxFile([buildSysexReply(0x00, 0, prog.toUnpacked())]);
+    triggerFileLoad(buf);
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('syx-viewer-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+
+    document.getElementById('syx-viewer-close').click();
+    expect(modal.classList.contains('hidden')).toBe(true);
   });
 });

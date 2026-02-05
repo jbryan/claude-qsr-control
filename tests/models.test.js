@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import { MockMIDIInput, MockMIDIOutput, setMockMIDIAccess, MockMIDIAccess } from './setup.js';
-import { extractBits, setBits, extractProgName, extractMixName, encodeProgName, encodeMixName, Program, Mix, readProgram, writeProgram, readMix, writeMix } from '../public/js/models.js';
+import { extractBits, setBits, extractProgName, extractMixName, encodeProgName, encodeMixName, Program, Mix, Effect, readProgram, writeProgram, readMix, writeMix, readEffect, writeEffect, readEditProgram, readEditMix, readEditEffect, writeEditEffect } from '../public/js/models.js';
 import { packQSData, unpackQSData } from '../public/js/midi.js';
 
 // --- extractBits / setBits ---
@@ -443,7 +443,7 @@ describe('Mix', () => {
 // --- Device I/O functions ---
 
 describe('readProgram / writeProgram', () => {
-  test('readProgram sends request and returns Program', async () => {
+  test('readProgram sends request and returns Program with Effect', async () => {
     const input = new MockMIDIInput('Test');
     const output = new MockMIDIOutput('Test');
 
@@ -453,12 +453,20 @@ describe('readProgram / writeProgram', () => {
       { enabled: false },
       { enabled: false },
     ]);
-    const reply = wrapInSysex(0x00, 3, unpacked);
+    const programReply = wrapInSysex(0x00, 3, unpacked);
+
+    const effectUnpacked = buildEffectUnpacked(0, [
+      [74, 3, 3],   // send1 pitch type
+      [99, 7, 75],  // send1 pitch mix
+    ]);
+    const effectReply = wrapInSysex(0x06, 3, effectUnpacked);
 
     output.send = jest.fn(function (data) {
       const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
       if (arr[0] === 0xF0 && arr[5] === 0x01) {
-        setTimeout(() => input.receive(reply), 0);
+        setTimeout(() => input.receive(programReply), 0);
+      } else if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        setTimeout(() => input.receive(effectReply), 0);
       }
     });
 
@@ -466,6 +474,10 @@ describe('readProgram / writeProgram', () => {
     expect(prog).toBeInstanceOf(Program);
     expect(prog.name).toBe('ReadTest');
     expect(prog.sounds[0].keyboard.sample.group).toBe(1);
+    expect(prog.effect).toBeInstanceOf(Effect);
+    expect(prog.effect.configuration).toBe(0);
+    expect(prog.effect.send1.pitch.type).toBe(3);
+    expect(prog.effect.send1.pitch.mix).toBe(75);
   });
 
   test('writeProgram sends packed program data', () => {
@@ -489,6 +501,45 @@ describe('readProgram / writeProgram', () => {
     expect(sentData[5]).toBe(0x00); // opcode for user program
     expect(sentData[6]).toBe(5); // program number
     expect(sentData[sentData.length - 1]).toBe(0xF7);
+  });
+});
+
+describe('readEditProgram', () => {
+  test('readEditProgram sends request and returns Program with Effect', async () => {
+    const input = new MockMIDIInput('Test');
+    const output = new MockMIDIOutput('Test');
+
+    const unpacked = buildProgramUnpacked('EditTest', 0, [
+      { enabled: true, sampleGroup: 2, sampleNumber: 10 },
+      { enabled: false },
+      { enabled: false },
+      { enabled: false },
+    ]);
+    const programReply = wrapInSysex(0x02, 0, unpacked);
+
+    const effectUnpacked = buildEffectUnpacked(1, [
+      [74, 7, 50],   // send1 delay time10ms
+      [92, 7, 80],   // send1 delay mix
+    ]);
+    const effectReply = wrapInSysex(0x08, 0, effectUnpacked);
+
+    output.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[5] === 0x03) {
+        setTimeout(() => input.receive(programReply), 0);
+      } else if (arr[0] === 0xF0 && arr[5] === 0x09) {
+        setTimeout(() => input.receive(effectReply), 0);
+      }
+    });
+
+    const prog = await readEditProgram(output, input);
+    expect(prog).toBeInstanceOf(Program);
+    expect(prog.name).toBe('EditTest');
+    expect(prog.sounds[0].keyboard.sample.group).toBe(2);
+    expect(prog.effect).toBeInstanceOf(Effect);
+    expect(prog.effect.configuration).toBe(1);
+    expect(prog.effect.send1.delay.time10ms).toBe(50);
+    expect(prog.effect.send1.delay.mix).toBe(80);
   });
 });
 
@@ -538,6 +589,520 @@ describe('readMix / writeMix', () => {
     expect(sentData[0]).toBe(0xF0);
     expect(sentData[5]).toBe(0x0E); // opcode for new mix
     expect(sentData[6]).toBe(10); // mix number
+    expect(sentData[sentData.length - 1]).toBe(0xF7);
+  });
+});
+
+// --- Effect class ---
+
+function buildEffectUnpacked(config, fieldValues) {
+  const unpacked = new Array(65).fill(0);
+  setBits(unpacked, 70, 4, config);
+  for (const [offset, bits, value] of fieldValues) {
+    setBits(unpacked, offset, bits, value);
+  }
+  return unpacked;
+}
+
+function wrapEffectInSysex(num, unpacked) {
+  return wrapInSysex(0x06, num, unpacked);
+}
+
+describe('Effect', () => {
+  test('fromUnpacked parses configuration', () => {
+    for (let c = 0; c < 5; c++) {
+      const unpacked = buildEffectUnpacked(c, []);
+      const effect = Effect.fromUnpacked(unpacked);
+      expect(effect.configuration).toBe(c);
+    }
+  });
+
+  test('fromUnpacked parses modulation fields', () => {
+    const unpacked = buildEffectUnpacked(0, [
+      [470, 4, 7],    // mod source1
+      [474, 6, 30],   // mod destination1
+      [480, 8, 150],  // mod level1
+      [488, 4, 3],    // mod source2
+      [492, 6, 20],   // mod destination2
+      [498, 8, 200],  // mod level2
+    ]);
+    const effect = Effect.fromUnpacked(unpacked);
+    expect(effect.mod.source1).toBe(7);
+    expect(effect.mod.destination1).toBe(30);
+    expect(effect.mod.level1).toBe(150);
+    expect(effect.mod.source2).toBe(3);
+    expect(effect.mod.destination2).toBe(20);
+    expect(effect.mod.level2).toBe(200);
+  });
+
+  test('modulation fields are identical across configs', () => {
+    const modValues = [
+      [470, 4, 9],
+      [474, 6, 15],
+      [480, 8, 100],
+      [488, 4, 5],
+      [492, 6, 25],
+      [498, 8, 180],
+    ];
+    for (let c = 0; c < 5; c++) {
+      const effect = Effect.fromUnpacked(buildEffectUnpacked(c, modValues));
+      expect(effect.mod.source1).toBe(9);
+      expect(effect.mod.destination1).toBe(15);
+      expect(effect.mod.level1).toBe(100);
+      expect(effect.mod.source2).toBe(5);
+      expect(effect.mod.destination2).toBe(25);
+      expect(effect.mod.level2).toBe(180);
+    }
+  });
+
+  test('config 0 parses send1 pitch, delay, reverb fields', () => {
+    const unpacked = buildEffectUnpacked(0, [
+      // send1 pitch
+      [74, 3, 3],    // type = flange_2
+      [77, 7, 50],   // speed
+      [84, 1, 1],    // shape
+      [85, 7, 75],   // depth
+      [92, 7, 40],   // feedback
+      [99, 7, 80],   // mix
+      // send1 delay
+      [106, 2, 1],   // type = stereo
+      [108, 8, 150], // input
+      [116, 7, 60],  // time10ms
+      [123, 4, 5],   // time1ms
+      [137, 7, 70],  // feedback
+      [151, 7, 90],  // mix
+      // send1 reverb
+      [158, 4, 3],   // type
+      [204, 7, 55],  // decay
+      [239, 7, 85],  // mix
+    ]);
+    const effect = Effect.fromUnpacked(unpacked);
+    expect(effect.send1.pitch.type).toBe(3);
+    expect(effect.send1.pitch.speed).toBe(50);
+    expect(effect.send1.pitch.shape).toBe(1);
+    expect(effect.send1.pitch.depth).toBe(75);
+    expect(effect.send1.pitch.feedback).toBe(40);
+    expect(effect.send1.pitch.mix).toBe(80);
+    expect(effect.send1.delay.type).toBe(1);
+    expect(effect.send1.delay.input).toBe(150);
+    expect(effect.send1.delay.time10ms).toBe(60);
+    expect(effect.send1.delay.time1ms).toBe(5);
+    expect(effect.send1.delay.feedback).toBe(70);
+    expect(effect.send1.delay.mix).toBe(90);
+    expect(effect.send1.reverb.type).toBe(3);
+    expect(effect.send1.reverb.decay).toBe(55);
+    expect(effect.send1.reverb.mix).toBe(85);
+  });
+
+  test('config 0 parses sends 2-4', () => {
+    const unpacked = buildEffectUnpacked(0, [
+      // send2 pitch
+      [246, 3, 5],   // type = resonator
+      [271, 7, 60],  // mix
+      // send3 pitch (2-bit type)
+      [348, 2, 2],   // type = resonator
+      [372, 7, 45],  // mix
+      // send4 delay
+      [430, 7, 30],  // time10ms
+      [448, 7, 55],  // mix
+      // send4 reverb
+      [455, 8, 128], // balance
+      [463, 7, 99],  // inputLevel
+    ]);
+    const effect = Effect.fromUnpacked(unpacked);
+    expect(effect.send2.pitch.type).toBe(5);
+    expect(effect.send2.pitch.mix).toBe(60);
+    expect(effect.send3.pitch.type).toBe(2);
+    expect(effect.send3.pitch.mix).toBe(45);
+    expect(effect.send4.delay.time10ms).toBe(30);
+    expect(effect.send4.delay.mix).toBe(55);
+    expect(effect.send4.reverb.balance).toBe(128);
+    expect(effect.send4.reverb.inputLevel).toBe(99);
+  });
+
+  test('config 0 round-trip', () => {
+    const unpacked = buildEffectUnpacked(0, [
+      [74, 3, 2],    // send1 pitch type
+      [77, 7, 45],   // send1 pitch speed
+      [99, 7, 70],   // send1 pitch mix
+      [106, 2, 2],   // send1 delay type
+      [116, 7, 40],  // send1 delay time10ms
+      [158, 4, 5],   // reverb type
+      [204, 7, 80],  // reverb decay
+      [246, 3, 1],   // send2 pitch type
+      [348, 2, 1],   // send3 pitch type
+      [430, 7, 20],  // send4 delay time10ms
+      [455, 8, 100], // send4 reverb balance
+      [470, 4, 8],   // mod source1
+      [498, 8, 190], // mod level2
+    ]);
+    const eff1 = Effect.fromUnpacked(unpacked);
+    const reUnpacked = eff1.toUnpacked();
+    const eff2 = Effect.fromUnpacked(reUnpacked);
+
+    expect(eff2.configuration).toBe(0);
+    expect(eff2.send1.pitch.type).toBe(2);
+    expect(eff2.send1.pitch.speed).toBe(45);
+    expect(eff2.send1.pitch.mix).toBe(70);
+    expect(eff2.send1.delay.type).toBe(2);
+    expect(eff2.send1.delay.time10ms).toBe(40);
+    expect(eff2.send1.reverb.type).toBe(5);
+    expect(eff2.send1.reverb.decay).toBe(80);
+    expect(eff2.send2.pitch.type).toBe(1);
+    expect(eff2.send3.pitch.type).toBe(1);
+    expect(eff2.send4.delay.time10ms).toBe(20);
+    expect(eff2.send4.reverb.balance).toBe(100);
+    expect(eff2.mod.source1).toBe(8);
+    expect(eff2.mod.level2).toBe(190);
+  });
+
+  test('config 1 round-trip', () => {
+    const unpacked = buildEffectUnpacked(1, [
+      // send1 delay (different positions from config 0)
+      [74, 7, 50],   // time10ms
+      [81, 4, 7],    // time1ms
+      [85, 7, 60],   // feedback
+      [92, 7, 80],   // mix
+      // send1 pitch
+      [99, 7, 90],   // inputLevel
+      [106, 1, 1],   // type
+      [107, 7, 40],  // speed
+      [122, 7, 55],  // mix
+      // send1 reverb
+      [129, 4, 3],   // type
+      [133, 7, 70],  // inputLevel
+      [199, 7, 85],  // mix
+      // send2 reverb
+      [206, 7, 45],  // inputLevel
+      // send3 pitch
+      [213, 7, 30],  // speed
+      // send3 reverb
+      [228, 4, 2],   // type
+      [298, 7, 60],  // mix
+      // send4 reverb
+      [305, 7, 75],  // inputLevel
+      // modulation
+      [470, 4, 6],   // mod source1
+    ]);
+    const eff1 = Effect.fromUnpacked(unpacked);
+    const reUnpacked = eff1.toUnpacked();
+    const eff2 = Effect.fromUnpacked(reUnpacked);
+
+    expect(eff2.configuration).toBe(1);
+    expect(eff2.send1.delay.time10ms).toBe(50);
+    expect(eff2.send1.delay.time1ms).toBe(7);
+    expect(eff2.send1.delay.feedback).toBe(60);
+    expect(eff2.send1.delay.mix).toBe(80);
+    expect(eff2.send1.pitch.inputLevel).toBe(90);
+    expect(eff2.send1.pitch.type).toBe(1);
+    expect(eff2.send1.pitch.speed).toBe(40);
+    expect(eff2.send1.pitch.mix).toBe(55);
+    expect(eff2.send1.reverb.type).toBe(3);
+    expect(eff2.send1.reverb.inputLevel).toBe(70);
+    expect(eff2.send1.reverb.mix).toBe(85);
+    expect(eff2.send2.reverb.inputLevel).toBe(45);
+    expect(eff2.send3.pitch.speed).toBe(30);
+    expect(eff2.send3.reverb.type).toBe(2);
+    expect(eff2.send3.reverb.mix).toBe(60);
+    expect(eff2.send4.reverb.inputLevel).toBe(75);
+    expect(eff2.mod.source1).toBe(6);
+  });
+
+  test('config 2 round-trip (lezlie)', () => {
+    const unpacked = buildEffectUnpacked(2, [
+      // lezlie send 1
+      [77, 7, 1],    // speed (0 or 1)
+      [84, 1, 1],    // motor
+      [85, 7, 4],    // horn
+      [99, 7, 70],   // mix
+      // delay send 1 (no type)
+      [108, 8, 50],  // input
+      [116, 7, 30],  // time10ms
+      [137, 7, 60],  // feedback
+      [151, 7, 80],  // mix
+      // shared config 0 params 26-81
+      [158, 4, 2],   // reverb type
+      [239, 7, 75],  // reverb mix
+      [246, 3, 4],   // send2 pitch type
+      [348, 2, 1],   // send3 pitch type
+      // modulation
+      [480, 8, 120], // mod level1
+    ]);
+    const eff1 = Effect.fromUnpacked(unpacked);
+    const reUnpacked = eff1.toUnpacked();
+    const eff2 = Effect.fromUnpacked(reUnpacked);
+
+    expect(eff2.configuration).toBe(2);
+    expect(eff2.send1.lezlie.speed).toBe(1);
+    expect(eff2.send1.lezlie.motor).toBe(1);
+    expect(eff2.send1.lezlie.horn).toBe(4);
+    expect(eff2.send1.lezlie.mix).toBe(70);
+    expect(eff2.send1.delay.input).toBe(50);
+    expect(eff2.send1.delay.time10ms).toBe(30);
+    expect(eff2.send1.delay.feedback).toBe(60);
+    expect(eff2.send1.delay.mix).toBe(80);
+    expect(eff2.send1.reverb.type).toBe(2);
+    expect(eff2.send1.reverb.mix).toBe(75);
+    expect(eff2.send2.pitch.type).toBe(4);
+    expect(eff2.send3.pitch.type).toBe(1);
+    expect(eff2.mod.level1).toBe(120);
+  });
+
+  test('config 3 round-trip (EQ)', () => {
+    const unpacked = buildEffectUnpacked(3, [
+      // send1 pitch (same as config 0)
+      [74, 3, 1],    // type
+      [77, 7, 55],   // speed
+      // send1 reverb (same as config 0)
+      [158, 4, 4],   // reverb type
+      [204, 7, 65],  // decay
+      // send2 reverb (partial)
+      [330, 1, 1],   // input1
+      [341, 7, 80],  // inputLevel
+      // EQ
+      [350, 3, 5],   // loFreq
+      [358, 4, 10],  // loGain
+      [365, 3, 6],   // hiFreq
+      [372, 4, 8],   // hiGain
+      // modulation
+      [492, 6, 35],  // mod destination2
+    ]);
+    const eff1 = Effect.fromUnpacked(unpacked);
+    const reUnpacked = eff1.toUnpacked();
+    const eff2 = Effect.fromUnpacked(reUnpacked);
+
+    expect(eff2.configuration).toBe(3);
+    expect(eff2.send1.pitch.type).toBe(1);
+    expect(eff2.send1.pitch.speed).toBe(55);
+    expect(eff2.send1.reverb.type).toBe(4);
+    expect(eff2.send1.reverb.decay).toBe(65);
+    expect(eff2.send2.reverb.input1).toBe(1);
+    expect(eff2.send2.reverb.inputLevel).toBe(80);
+    expect(eff2.eq.loFreq).toBe(5);
+    expect(eff2.eq.loGain).toBe(10);
+    expect(eff2.eq.hiFreq).toBe(6);
+    expect(eff2.eq.hiGain).toBe(8);
+    expect(eff2.mod.destination2).toBe(35);
+  });
+
+  test('config 4 round-trip (overdrive + lezlie)', () => {
+    const unpacked = buildEffectUnpacked(4, [
+      // pitch (2-bit type)
+      [74, 2, 1],    // type = flange
+      [77, 7, 40],   // speed
+      [99, 7, 60],   // mix
+      [163, 2, 2],   // input2
+      [280, 8, 150], // inputBalance
+      // lezlie (scattered)
+      [309, 1, 1],   // speed
+      [330, 1, 1],   // motor
+      [316, 7, 5],   // horn
+      [249, 7, 70],  // mix
+      [331, 1, 1],   // input1
+      [323, 4, 8],   // input2
+      [333, 8, 128], // inputBalance
+      // delay
+      [106, 2, 2],   // type = ping-pong
+      [108, 8, 100], // inputBalance
+      [116, 7, 35],  // time10ms
+      [151, 7, 75],  // mix
+      [288, 3, 3],   // input2
+      // reverb
+      [158, 4, 5],   // type
+      [246, 3, 4],   // input2
+      [204, 7, 80],  // decay
+      [239, 7, 90],  // mix
+      // overdrive
+      [357, 1, 1],   // type
+      [379, 8, 180], // balance
+      [398, 7, 60],  // threshold
+      [387, 7, 45],  // brightness
+      // EQ
+      [350, 3, 3],   // loFreq
+      [372, 4, 7],   // hiGain
+      // modulation
+      [470, 4, 10],  // source1
+      [498, 8, 175], // level2
+    ]);
+    const eff1 = Effect.fromUnpacked(unpacked);
+    const reUnpacked = eff1.toUnpacked();
+    const eff2 = Effect.fromUnpacked(reUnpacked);
+
+    expect(eff2.configuration).toBe(4);
+    expect(eff2.send1.pitch.type).toBe(1);
+    expect(eff2.send1.pitch.speed).toBe(40);
+    expect(eff2.send1.pitch.mix).toBe(60);
+    expect(eff2.send1.pitch.input2).toBe(2);
+    expect(eff2.send1.pitch.inputBalance).toBe(150);
+    expect(eff2.send1.lezlie.speed).toBe(1);
+    expect(eff2.send1.lezlie.motor).toBe(1);
+    expect(eff2.send1.lezlie.horn).toBe(5);
+    expect(eff2.send1.lezlie.mix).toBe(70);
+    expect(eff2.send1.lezlie.input1).toBe(1);
+    expect(eff2.send1.lezlie.input2).toBe(8);
+    expect(eff2.send1.lezlie.inputBalance).toBe(128);
+    expect(eff2.send1.delay.type).toBe(2);
+    expect(eff2.send1.delay.inputBalance).toBe(100);
+    expect(eff2.send1.delay.time10ms).toBe(35);
+    expect(eff2.send1.delay.mix).toBe(75);
+    expect(eff2.send1.delay.input2).toBe(3);
+    expect(eff2.send1.reverb.type).toBe(5);
+    expect(eff2.send1.reverb.input2).toBe(4);
+    expect(eff2.send1.reverb.decay).toBe(80);
+    expect(eff2.send1.reverb.mix).toBe(90);
+    expect(eff2.send1.overdrive.type).toBe(1);
+    expect(eff2.send1.overdrive.balance).toBe(180);
+    expect(eff2.send1.overdrive.threshold).toBe(60);
+    expect(eff2.send1.overdrive.brightness).toBe(45);
+    expect(eff2.eq.loFreq).toBe(3);
+    expect(eff2.eq.hiGain).toBe(7);
+    expect(eff2.mod.source1).toBe(10);
+    expect(eff2.mod.level2).toBe(175);
+  });
+
+  test('fromSysex handles SysEx header/trailer', () => {
+    const unpacked = buildEffectUnpacked(0, [
+      [74, 3, 4],    // send1 pitch type = detune
+      [77, 7, 50],   // speed
+      [99, 7, 90],   // mix
+    ]);
+    const sysex = wrapEffectInSysex(42, unpacked);
+    const effect = Effect.fromSysex(sysex);
+    expect(effect.configuration).toBe(0);
+    expect(effect.send1.pitch.type).toBe(4);
+    expect(effect.send1.pitch.speed).toBe(50);
+    expect(effect.send1.pitch.mix).toBe(90);
+  });
+
+  test('toUnpacked produces 65-byte array', () => {
+    const unpacked = buildEffectUnpacked(0, []);
+    const effect = Effect.fromUnpacked(unpacked);
+    const result = effect.toUnpacked();
+    expect(result).toHaveLength(65);
+  });
+
+  test('unknown configuration falls back to config 0', () => {
+    const unpacked = buildEffectUnpacked(0, [
+      [74, 3, 2],   // send1 pitch type
+      [77, 7, 30],  // speed
+    ]);
+    // Force config to an invalid value
+    setBits(unpacked, 70, 4, 7);
+    const effect = Effect.fromUnpacked(unpacked);
+    expect(effect.configuration).toBe(7);
+    // Should still parse using config 0 field table as fallback
+    expect(effect.send1.pitch.type).toBe(2);
+    expect(effect.send1.pitch.speed).toBe(30);
+  });
+});
+
+describe('readEffect / writeEffect', () => {
+  test('readEffect sends request and returns Effect', async () => {
+    const input = new MockMIDIInput('Test');
+    const output = new MockMIDIOutput('Test');
+
+    const unpacked = buildEffectUnpacked(0, [
+      [74, 3, 3],   // send1 pitch type
+      [99, 7, 75],  // send1 pitch mix
+    ]);
+    const reply = wrapEffectInSysex(10, unpacked);
+
+    output.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        setTimeout(() => input.receive(reply), 0);
+      }
+    });
+
+    const effect = await readEffect(output, input, 10);
+    expect(effect).toBeInstanceOf(Effect);
+    expect(effect.configuration).toBe(0);
+    expect(effect.send1.pitch.type).toBe(3);
+    expect(effect.send1.pitch.mix).toBe(75);
+  });
+
+  test('writeEffect sends packed effect data', () => {
+    const output = new MockMIDIOutput('Test');
+
+    const unpacked = buildEffectUnpacked(2, [
+      [77, 7, 1],   // lezlie speed
+      [99, 7, 50],  // lezlie mix
+    ]);
+    const effect = Effect.fromUnpacked(unpacked);
+
+    writeEffect(output, 20, effect);
+
+    expect(output.send).toHaveBeenCalled();
+    const sentData = output.send.mock.calls[0][0];
+    expect(sentData[0]).toBe(0xF0);
+    expect(sentData[5]).toBe(0x06); // opcode for user effects
+    expect(sentData[6]).toBe(20);   // effect number
+    expect(sentData[sentData.length - 1]).toBe(0xF7);
+  });
+});
+
+describe('readEditMix', () => {
+  test('readEditMix sends request and returns Mix', async () => {
+    const input = new MockMIDIInput('Test');
+    const output = new MockMIDIOutput('Test');
+
+    const unpacked = new Array(138).fill(0);
+    encodeMixName(unpacked, 'EditMix');
+    const reply = wrapInSysex(0x0E, 100, unpacked);
+
+    output.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[5] === 0x0F) {
+        setTimeout(() => input.receive(reply), 0);
+      }
+    });
+
+    const mix = await readEditMix(output, input);
+    expect(mix).toBeInstanceOf(Mix);
+    expect(mix.name).toBe('EditMix');
+  });
+});
+
+describe('readEditEffect / writeEditEffect', () => {
+  test('readEditEffect sends request and returns Effect', async () => {
+    const input = new MockMIDIInput('Test');
+    const output = new MockMIDIOutput('Test');
+
+    const unpacked = buildEffectUnpacked(2, [
+      [77, 7, 1],   // lezlie speed
+      [99, 7, 50],  // lezlie mix
+    ]);
+    const reply = wrapInSysex(0x08, 0, unpacked);
+
+    output.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[5] === 0x09) {
+        setTimeout(() => input.receive(reply), 0);
+      }
+    });
+
+    const effect = await readEditEffect(output, input, 0);
+    expect(effect).toBeInstanceOf(Effect);
+    expect(effect.configuration).toBe(2);
+    expect(effect.send1.lezlie.speed).toBe(1);
+    expect(effect.send1.lezlie.mix).toBe(50);
+  });
+
+  test('writeEditEffect sends packed edit effect data', () => {
+    const output = new MockMIDIOutput('Test');
+
+    const unpacked = buildEffectUnpacked(1, [
+      [74, 7, 30],  // delay time10ms
+    ]);
+    const effect = Effect.fromUnpacked(unpacked);
+
+    writeEditEffect(output, 0, effect);
+
+    expect(output.send).toHaveBeenCalled();
+    const sentData = output.send.mock.calls[0][0];
+    expect(sentData[0]).toBe(0xF0);
+    expect(sentData[5]).toBe(0x08); // opcode for edit effects
+    expect(sentData[6]).toBe(0);    // edit number
     expect(sentData[sentData.length - 1]).toBe(0xF7);
   });
 });
