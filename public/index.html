@@ -63,10 +63,17 @@
         <input type="number" id="lcd-patch" class="lcd-patch-input" min="0" max="127" value="0" disabled>
         <span class="lcd-col-name" id="lcd-name"></span>
       </div>
+      <button id="edit-buf-btn" class="icon-btn edit-buf-btn hidden" title="Edit Buffer">
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor">
+          <path d="M4 4h8l4 4v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z"/>
+          <path d="M12 4v4h4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      </button>
       <button id="prog-info-btn" class="icon-btn prog-info-btn hidden" title="Program Info">
         <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor">
           <circle cx="10" cy="10" r="9" stroke="currentColor" stroke-width="1.5" fill="none"/>
-          <text x="10" y="14.5" text-anchor="middle" font-size="12" font-weight="bold" fill="currentColor">i</text>
+          <circle cx="10" cy="6" r="1.2"/>
+          <rect x="8.8" y="9" width="2.4" height="6.5" rx="0.5"/>
         </svg>
       </button>
     </div>

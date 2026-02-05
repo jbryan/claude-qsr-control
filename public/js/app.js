@@ -1,7 +1,8 @@
 import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestGlobalData, unpackQSData } from './midi.js';
+import { logSend } from './midi-log.js';
 import { getPresetName, getAllPresets } from './presets.js';
 import { getKeyboardSampleName, getDrumSampleName } from './samples.js';
-import { getNestedField, Program, Mix, readProgram, readMix } from './models.js';
+import { getNestedField, Program, Mix, readProgram, readMix, readEditProgram, readEditMix } from './models.js';
 import { putProgram, putMix, getAllNames, hasData } from './store.js';
 
 const deviceSelect = document.getElementById('device-select');
@@ -26,6 +27,7 @@ const globalsBtn = document.getElementById('globals-btn');
 const globalsModal = document.getElementById('globals-modal');
 const globalsBody = document.getElementById('globals-body');
 const globalsClose = document.getElementById('globals-close');
+const editBufBtn = document.getElementById('edit-buf-btn');
 const progInfoBtn = document.getElementById('prog-info-btn');
 const progInfoModal = document.getElementById('prog-info-modal');
 const progInfoBody = document.getElementById('prog-info-body');
@@ -223,8 +225,9 @@ function maxPatch() {
 }
 
 function updateProgInfoVisibility() {
-  const show = activeDevice && ((currentMode === 'prog' && currentBank === 0) || currentMode === 'mix');
+  const show = activeDevice && currentBank === 0;
   progInfoBtn.classList.toggle('hidden', !show);
+  editBufBtn.classList.toggle('hidden', !activeDevice);
 }
 
 function updateBankPatchUI() {
@@ -980,6 +983,29 @@ progInfoBtn.addEventListener('click', () => {
   if (currentMode === 'mix') openMixInfo();
   else openProgInfo();
 });
+
+editBufBtn.addEventListener('click', async () => {
+  if (!activeDevice) return;
+  if (currentMode === 'mix') {
+    mixInfoModal.classList.remove('hidden');
+    mixInfoBody.innerHTML = '<p class="globals-loading">Requesting edit buffer...</p>';
+    try {
+      const mix = await readEditMix(activeDevice.device.output, activeDevice.device.input);
+      renderMixInfo(mix);
+    } catch {
+      mixInfoBody.innerHTML = '<p class="globals-loading">Failed to read edit buffer.</p>';
+    }
+  } else {
+    progInfoModal.classList.remove('hidden');
+    progInfoBody.innerHTML = '<p class="globals-loading">Requesting edit buffer...</p>';
+    try {
+      const program = await readEditProgram(activeDevice.device.output, activeDevice.device.input);
+      renderProgInfo(program);
+    } catch {
+      progInfoBody.innerHTML = '<p class="globals-loading">Failed to read edit buffer.</p>';
+    }
+  }
+});
 progInfoClose.addEventListener('click', closeProgInfo);
 progInfoModal.addEventListener('click', (e) => {
   if (e.target === progInfoModal) closeProgInfo();
@@ -1270,6 +1296,7 @@ async function sendSyxToDevice() {
 
   for (let i = 0; i < msgs.length; i++) {
     titleEl.textContent = `Sending ${i + 1}/${msgs.length}...`;
+    logSend(msgs[i]);
     activeDevice.device.output.send(msgs[i]);
     if (i < msgs.length - 1) {
       await new Promise(r => setTimeout(r, 300));

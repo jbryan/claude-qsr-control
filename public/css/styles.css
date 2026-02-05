@@ -240,6 +240,7 @@ body {
   line-height: 1.4;
   display: flex;
   gap: 0;
+  padding-right: 1.5rem;
 }
 
 .lcd-line2.hidden {
@@ -405,6 +406,23 @@ body {
 .lcd.success {
   background: var(--lcd-bg);
   color: var(--lcd-text);
+}
+
+/* --- Edit buffer button --- */
+
+.edit-buf-btn {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 1.75rem;
+  padding: 0.15rem;
+  color: var(--lcd-text);
+  opacity: 0.6;
+}
+
+.edit-buf-btn:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--lcd-text);
+  border-color: var(--lcd-text);
 }
 
 /* --- Program info button --- */

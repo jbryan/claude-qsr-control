@@ -43,6 +43,7 @@ function setupDOM() {
         </div>
       </div>
     </div>
+    <button id="edit-buf-btn" class="icon-btn edit-buf-btn hidden">E</button>
     <button id="prog-info-btn" class="icon-btn prog-info-btn hidden" title="Program Info">i</button>
     <div id="prog-info-modal" class="search-modal hidden">
       <div class="search-modal-content prog-info-content">
@@ -144,6 +145,11 @@ function autoReplyIdentity(output, input) {
       const num = arr[6];
       const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
       setTimeout(() => input.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+    }
+    // Reply to edit program request (opcode 0x03)
+    if (arr[0] === 0xF0 && arr[5] === 0x03) {
+      const prog = makeMinimalProgram('EditBuf');
+      setTimeout(() => input.receive(buildSysexReply(0x02, 0, prog.toUnpacked())), 0);
     }
     // Reply to mix dump request (opcode 0x0F)
     if (arr[0] === 0xF0 && arr[5] === 0x0F) {
@@ -1255,5 +1261,78 @@ describe('user bank names', () => {
     const headers = document.querySelectorAll('.search-group-header');
     expect(headers.length).toBe(1);
     expect(headers[0].textContent).toBe('PROG — User');
+  });
+});
+
+// --- Edit Buffer Button ---
+
+describe('edit buffer button', () => {
+  test('edit-buf-btn visible when device connected', async () => {
+    await loadApp();
+    expect(document.getElementById('edit-buf-btn').classList.contains('hidden')).toBe(false);
+  });
+
+  test('edit-buf-btn hidden when no device', async () => {
+    mockAccess = new MockMIDIAccess();
+    setMockMIDIAccess(mockAccess);
+    await loadApp();
+    expect(document.getElementById('edit-buf-btn').classList.contains('hidden')).toBe(true);
+  });
+
+  test('clicking edit-buf-btn in prog mode opens prog-info-modal with edit buffer data', async () => {
+    await loadApp();
+
+    document.getElementById('edit-buf-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('prog-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+    const body = document.getElementById('prog-info-body');
+    expect(body.textContent).toContain('EditBuf');
+  });
+
+  test('clicking edit-buf-btn in mix mode opens mix-info-modal with edit buffer data', async () => {
+    // Add auto-reply for mix edit buffer (opcode 0x0F, mixNum=100)
+    const origSend = qsrOutput.send;
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      // Identity inquiry
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+        return;
+      }
+      // Reply to program dump request (opcode 0x01)
+      if (arr[0] === 0xF0 && arr[5] === 0x01) {
+        const num = arr[6];
+        const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+        return;
+      }
+      // Reply to edit program request (opcode 0x03)
+      if (arr[0] === 0xF0 && arr[5] === 0x03) {
+        const prog = makeMinimalProgram('EditBuf');
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x02, 0, prog.toUnpacked())), 0);
+        return;
+      }
+      // Reply to mix dump request (opcode 0x0F)
+      if (arr[0] === 0xF0 && arr[5] === 0x0F) {
+        const num = arr[6];
+        const mix = makeMinimalMix(`EditMixBuf`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x0E, num, mix.toUnpacked())), 0);
+        return;
+      }
+    });
+
+    await loadApp();
+    switchMode('mix');
+    await jest.advanceTimersByTimeAsync(500);
+
+    document.getElementById('edit-buf-btn').click();
+    await jest.advanceTimersByTimeAsync(500);
+
+    const modal = document.getElementById('mix-info-modal');
+    expect(modal.classList.contains('hidden')).toBe(false);
+    const body = document.getElementById('mix-info-body');
+    expect(body.textContent).toContain('EditMixBuf');
   });
 });

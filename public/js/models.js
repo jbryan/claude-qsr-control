@@ -1,4 +1,4 @@
-import { unpackQSData, packQSData, requestUserProgram, requestNewMix, sendUserProgram, sendNewMix } from './midi.js';
+import { unpackQSData, packQSData, requestUserProgram, requestEditProgram, requestNewMix, sendUserProgram, sendNewMix } from './midi.js';
 
 // --- Bit helpers ---
 
@@ -451,4 +451,14 @@ export async function writeMix(output, mixNum, mix) {
   const unpacked = mix.toUnpacked();
   const packed = packQSData(unpacked);
   sendNewMix(output, mixNum, new Uint8Array(packed));
+}
+
+export async function readEditProgram(output, input) {
+  const response = await requestEditProgram(output, input, 0);
+  return Program.fromSysex(response);
+}
+
+export async function readEditMix(output, input) {
+  const response = await requestNewMix(output, input, 100);
+  return Mix.fromSysex(response);
 }
