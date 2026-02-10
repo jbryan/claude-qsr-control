@@ -425,23 +425,6 @@ body {
   border-color: var(--lcd-text);
 }
 
-/* --- Program info button --- */
-
-.prog-info-btn {
-  position: absolute;
-  right: 0.5rem;
-  bottom: 0.45rem;
-  padding: 0.15rem;
-  color: var(--lcd-text);
-  opacity: 0.6;
-}
-
-.prog-info-btn:hover:not(:disabled) {
-  opacity: 1;
-  color: var(--lcd-text);
-  border-color: var(--lcd-text);
-}
-
 /* --- Program info modal --- */
 
 .prog-info-content {

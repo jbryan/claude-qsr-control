@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import { MockMIDIInput, MockMIDIOutput, setMockMIDIAccess, MockMIDIAccess } from './setup.js';
-import { extractBits, setBits, extractProgName, extractMixName, encodeProgName, encodeMixName, Program, Mix, Effect, readProgram, writeProgram, readMix, writeMix, readEffect, writeEffect, readEditProgram, readEditMix, readEditEffect, writeEditEffect } from '../public/js/models.js';
+import { extractBits, setBits, extractProgName, extractMixName, encodeProgName, encodeMixName, computeSHA256, Program, Mix, Effect, readProgram, writeProgram, readMix, writeMix, readEffect, writeEffect, readEditProgram, readEditMix, readEditEffect, writeEditEffect } from '../public/js/models.js';
 import { packQSData, unpackQSData } from '../public/js/midi.js';
 
 // --- extractBits / setBits ---
@@ -1104,6 +1104,115 @@ describe('readEditEffect / writeEditEffect', () => {
     expect(sentData[5]).toBe(0x08); // opcode for edit effects
     expect(sentData[6]).toBe(0);    // edit number
     expect(sentData[sentData.length - 1]).toBe(0xF7);
+  });
+});
+
+// --- Hash computation ---
+
+describe('hash computation', () => {
+  test('Program.computeHash produces 64-char hex string', async () => {
+    const unpacked = buildProgramUnpacked('HashTest', 0, [
+      { enabled: true }, { enabled: false }, { enabled: false }, { enabled: false },
+    ]);
+    const prog = Program.fromUnpacked(unpacked);
+    prog.effect = Effect.fromUnpacked(new Array(65).fill(0));
+    const hash = await prog.computeHash();
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(prog.hash).toBe(hash);
+  });
+
+  test('Mix.computeHash produces 64-char hex string', async () => {
+    const unpacked = buildMixUnpacked('HashMix', false, 0, []);
+    const mix = Mix.fromUnpacked(unpacked);
+    const hash = await mix.computeHash();
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(mix.hash).toBe(hash);
+  });
+
+  test('identical programs produce identical hashes', async () => {
+    const unpacked = buildProgramUnpacked('Same', 0, [
+      { enabled: true }, { enabled: false }, { enabled: false }, { enabled: false },
+    ]);
+    const prog1 = Program.fromUnpacked(unpacked);
+    prog1.effect = Effect.fromUnpacked(new Array(65).fill(0));
+    const prog2 = Program.fromUnpacked(unpacked);
+    prog2.effect = Effect.fromUnpacked(new Array(65).fill(0));
+    await prog1.computeHash();
+    await prog2.computeHash();
+    expect(prog1.hash).toBe(prog2.hash);
+  });
+
+  test('different programs produce different hashes', async () => {
+    const prog1 = Program.fromUnpacked(buildProgramUnpacked('Prog1', 0, [
+      { enabled: true }, { enabled: false }, { enabled: false }, { enabled: false },
+    ]));
+    prog1.effect = Effect.fromUnpacked(new Array(65).fill(0));
+    const prog2 = Program.fromUnpacked(buildProgramUnpacked('Prog2', 0, [
+      { enabled: true }, { enabled: false }, { enabled: false }, { enabled: false },
+    ]));
+    prog2.effect = Effect.fromUnpacked(new Array(65).fill(0));
+    await prog1.computeHash();
+    await prog2.computeHash();
+    expect(prog1.hash).not.toBe(prog2.hash);
+  });
+
+  test('same program with different effects produces different hashes', async () => {
+    const unpacked = buildProgramUnpacked('FxTest', 0, [
+      { enabled: true }, { enabled: false }, { enabled: false }, { enabled: false },
+    ]);
+    const prog1 = Program.fromUnpacked(unpacked);
+    prog1.effect = Effect.fromUnpacked(new Array(65).fill(0));
+
+    const prog2 = Program.fromUnpacked(unpacked);
+    const effectBytes = new Array(65).fill(0);
+    setBits(effectBytes, 70, 4, 3); // different config
+    prog2.effect = Effect.fromUnpacked(effectBytes);
+
+    await prog1.computeHash();
+    await prog2.computeHash();
+    expect(prog1.hash).not.toBe(prog2.hash);
+  });
+
+  test('readProgram populates .hash', async () => {
+    const input = new MockMIDIInput('Test');
+    const output = new MockMIDIOutput('Test');
+
+    const unpacked = buildProgramUnpacked('HashRead', 0, [
+      { enabled: true }, { enabled: false }, { enabled: false }, { enabled: false },
+    ]);
+    const programReply = wrapInSysex(0x00, 0, unpacked);
+    const effectUnpacked = buildEffectUnpacked(0, []);
+    const effectReply = wrapInSysex(0x06, 0, effectUnpacked);
+
+    output.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[5] === 0x01) {
+        setTimeout(() => input.receive(programReply), 0);
+      } else if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        setTimeout(() => input.receive(effectReply), 0);
+      }
+    });
+
+    const prog = await readProgram(output, input, 0);
+    expect(prog.hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test('readMix populates .hash', async () => {
+    const input = new MockMIDIInput('Test');
+    const output = new MockMIDIOutput('Test');
+
+    const unpacked = buildMixUnpacked('HashMixR', false, 0, []);
+    const reply = wrapInSysex(0x0E, 0, unpacked);
+
+    output.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[5] === 0x0F) {
+        setTimeout(() => input.receive(reply), 0);
+      }
+    });
+
+    const mix = await readMix(output, input, 0);
+    expect(mix.hash).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

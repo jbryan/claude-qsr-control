@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import { MockMIDIAccess, MockMIDIInput, MockMIDIOutput, setMockMIDIAccess } from './setup.js';
-import { putProgram, putMix, clearAll } from '../public/js/store.js';
+import { putProgram, putMix, clearAll, openDB } from '../public/js/store.js';
 import { Program, Mix, Effect, encodeProgName, encodeMixName, setBits } from '../public/js/models.js';
 
 let mockAccess;
@@ -44,7 +44,6 @@ function setupDOM() {
       </div>
     </div>
     <button id="edit-buf-btn" class="icon-btn edit-buf-btn hidden">E</button>
-    <button id="prog-info-btn" class="icon-btn prog-info-btn hidden" title="Program Info">i</button>
     <div id="prog-info-modal" class="search-modal hidden">
       <div class="search-modal-content prog-info-content">
         <div class="globals-modal-header">
@@ -92,6 +91,11 @@ function setupDOM() {
         <div class="search-filters">
           <label class="search-filter"><input type="checkbox" id="filter-prog" checked> Programs</label>
           <label class="search-filter"><input type="checkbox" id="filter-mix" checked> Mixes</label>
+          <select id="filter-stored" class="search-filter">
+            <option value="all">All</option>
+            <option value="stored" selected>Stored</option>
+            <option value="unstored">Not Stored</option>
+          </select>
         </div>
         <ul id="search-results"></ul>
       </div>
@@ -184,7 +188,9 @@ function makeMinimalProgram(name) {
   const baseBitOff = 10 * 8;
   setBits(unpacked, baseBitOff, 1, 0);
   setBits(unpacked, baseBitOff + 84 * 8 + 3, 1, 1);
-  return Program.fromUnpacked(unpacked);
+  const prog = Program.fromUnpacked(unpacked);
+  prog.effect = makeMinimalEffect();
+  return prog;
 }
 
 function makeMinimalMix(name) {
@@ -197,13 +203,19 @@ function makeMinimalMix(name) {
   return Mix.fromUnpacked(unpacked);
 }
 
-async function seedUserBanks() {
+async function seedAllBanks() {
+  // User bank (bank 0)
   for (let i = 0; i < 128; i++) {
-    await putProgram(i, makeMinimalProgram(`User ${String(i).padStart(3, '0')}`));
+    await putProgram(0, i, makeMinimalProgram(`User ${String(i).padStart(3, '0')}`));
   }
   for (let i = 0; i < 100; i++) {
-    await putMix(i, makeMinimalMix(`User Mix ${String(i).padStart(3, '0')}`));
+    await putMix(0, i, makeMinimalMix(`User Mix ${String(i).padStart(3, '0')}`));
   }
+  // Preset entries referenced by tests
+  await putProgram(1, 0, makeMinimalProgram('TrueStereo'));
+  await putProgram(1, 1, makeMinimalProgram('Titanium88'));
+  await putProgram(4, 0, makeMinimalProgram('AcGrandPno'));
+  await putMix(1, 0, makeMinimalMix('Zen Piano'));
 }
 
 beforeEach(async () => {
@@ -219,8 +231,8 @@ beforeEach(async () => {
   qsrOutput = dev.output;
   autoReplyIdentity(qsrOutput, qsrInput);
   setMockMIDIAccess(mockAccess);
-  // Pre-seed IndexedDB user bank cache to prevent auto-refresh during tests
-  await seedUserBanks();
+  // Pre-seed IndexedDB cache to prevent auto-refresh during tests
+  await seedAllBanks();
 });
 
 afterEach(() => {
@@ -671,7 +683,7 @@ describe('preset name lookup', () => {
 
   test('does not show preset name for User bank (0)', async () => {
     await loadApp();
-    // Default is bank 0 (User) — name should be empty (fetched via SysEx which times out)
+    // Default is bank 0 (User) — name comes from IndexedDB cache
     await jest.advanceTimersByTimeAsync(3000);
     const lcd2 = document.getElementById('lcd-line2');
     // The name column should not contain any preset bank 1 name
@@ -683,6 +695,9 @@ describe('preset name lookup', () => {
 
 describe('stale fetch guard', () => {
   test('discards stale patch name when a newer fetch supersedes it', async () => {
+    // Clear cache so fetchPatchName actually fetches from hardware
+    await clearAll();
+
     // Set up output to auto-reply with patch names, but with a delay
     qsrOutput.send = jest.fn(function (data) {
       const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -812,7 +827,7 @@ describe('search', () => {
     openSearch();
     expect(modal.classList.contains('hidden')).toBe(false);
 
-    // Should show all presets (grouped) when input is empty
+    // Should show all cached entries (grouped) when input is empty
     const items = document.querySelectorAll('.search-result-item');
     expect(items.length).toBeGreaterThan(0);
     const headers = document.querySelectorAll('.search-group-header');
@@ -955,7 +970,7 @@ describe('globals dialog', () => {
       packed.push(((b[5] >> 2) & 0x3F) | ((b[6] & 0x01) << 6));
       packed.push((b[6] >> 1) & 0x7F);
     }
-    // Handle partial trailing group (6 remaining bytes → 7 packed bytes)
+    // Handle partial trailing group (6 remaining bytes -> 7 packed bytes)
     const tail = unpacked.length % 7;
     if (tail > 0) {
       const i = unpacked.length - tail;
@@ -1221,10 +1236,10 @@ describe('user bank names', () => {
     // Clear and re-seed with custom names
     await clearAll();
     for (let i = 0; i < 128; i++) {
-      await putProgram(i, makeMinimalProgram(`Prog ${i}`));
+      await putProgram(0, i, makeMinimalProgram(`Prog ${i}`));
     }
     for (let i = 0; i < 100; i++) {
-      await putMix(i, makeMinimalMix(`Mix ${i}`));
+      await putMix(0, i, makeMinimalMix(`Mix ${i}`));
     }
     await loadApp();
 
@@ -1243,10 +1258,10 @@ describe('user bank names', () => {
     // Clear and re-seed with custom names
     await clearAll();
     for (let i = 0; i < 128; i++) {
-      await putProgram(i, makeMinimalProgram(`MyProg${i}`));
+      await putProgram(0, i, makeMinimalProgram(`MyProg${i}`));
     }
     for (let i = 0; i < 100; i++) {
-      await putMix(i, makeMinimalMix(`MyMix${i}`));
+      await putMix(0, i, makeMinimalMix(`MyMix${i}`));
     }
     await loadApp();
 
@@ -1268,7 +1283,7 @@ describe('user bank names', () => {
   test('search shows user programs under PROG — User group', async () => {
     // Clear and seed with a program at slot 5 (not slot 0, which fetchPatchName overwrites)
     await clearAll();
-    await putProgram(5, makeMinimalProgram('TestProg'));
+    await putProgram(0, 5, makeMinimalProgram('TestProg'));
     await loadApp();
 
     openSearch();
@@ -1301,7 +1316,7 @@ describe('edit buffer button', () => {
     await loadApp();
 
     document.getElementById('edit-buf-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    await waitForProgramLoad();
 
     const modal = document.getElementById('prog-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
@@ -1360,7 +1375,7 @@ describe('edit buffer button', () => {
     await jest.advanceTimersByTimeAsync(500);
 
     document.getElementById('edit-buf-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    await waitForProgramLoad();
 
     const modal = document.getElementById('mix-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
@@ -1369,24 +1384,28 @@ describe('edit buffer button', () => {
   });
 });
 
+async function waitForProgramLoad() {
+  for (let i = 0; i < 5; i++) await jest.advanceTimersByTimeAsync(200);
+}
+
 describe('program info dialog', () => {
-  test('prog-info-btn opens modal with program data', async () => {
+  test('edit-buf-btn opens modal with program data', async () => {
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const modal = document.getElementById('prog-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
     const body = document.getElementById('prog-info-body');
-    expect(body.textContent).toContain('User 000');
+    expect(body.textContent).toContain('EditBuf');
   });
 
   test('renders 5 tabs including Effects', async () => {
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const tabs = document.querySelectorAll('.prog-info-tab');
     expect(tabs).toHaveLength(5);
@@ -1400,8 +1419,8 @@ describe('program info dialog', () => {
   test('tab click switches active panel', async () => {
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const tabs = document.querySelectorAll('.prog-info-tab');
     const panels = document.querySelectorAll('.prog-info-panel');
@@ -1421,8 +1440,8 @@ describe('program info dialog', () => {
   test('Effects tab shows configuration', async () => {
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const tabs = document.querySelectorAll('.prog-info-tab');
     tabs[4].click();
@@ -1435,8 +1454,8 @@ describe('program info dialog', () => {
   test('disabled sounds show disabled message', async () => {
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     // Sound 2 is disabled in makeMinimalProgram
     const tabs = document.querySelectorAll('.prog-info-tab');
@@ -1449,8 +1468,8 @@ describe('program info dialog', () => {
   test('close button closes prog-info-modal', async () => {
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const modal = document.getElementById('prog-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
@@ -1462,8 +1481,8 @@ describe('program info dialog', () => {
   test('Escape closes prog-info-modal', async () => {
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const modal = document.getElementById('prog-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
@@ -1475,8 +1494,8 @@ describe('program info dialog', () => {
   test('backdrop click closes prog-info-modal', async () => {
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const modal = document.getElementById('prog-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
@@ -1485,7 +1504,7 @@ describe('program info dialog', () => {
     expect(modal.classList.contains('hidden')).toBe(true);
   });
 
-  test('shows error when program request fails', async () => {
+  test('shows error when edit buffer request fails', async () => {
     await loadApp();
 
     // Override send to not reply to program requests
@@ -1497,7 +1516,7 @@ describe('program info dialog', () => {
       // Don't reply to program or effect requests — will timeout
     });
 
-    document.getElementById('prog-info-btn').click();
+    document.getElementById('edit-buf-btn').click();
     // Advance past the 5s timeout
     await jest.advanceTimersByTimeAsync(6000);
 
@@ -1506,33 +1525,31 @@ describe('program info dialog', () => {
   });
 
   test('renders drum sound when sound is in drum mode', async () => {
-    // Override auto-reply to return a drum-mode program
+    // Override auto-reply to return a drum-mode program in edit buffer
     qsrOutput.send = jest.fn(function (data) {
       const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
       if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
         setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
       }
-      if (arr[0] === 0xF0 && arr[5] === 0x01) {
-        const num = arr[6];
+      if (arr[0] === 0xF0 && arr[5] === 0x03) {
         const unpacked = new Array(350).fill(0);
         encodeProgName(unpacked, `DrumProg`);
         const baseBitOff = 10 * 8;
         setBits(unpacked, baseBitOff, 1, 1);       // isDrum = true
         setBits(unpacked, baseBitOff + 81 * 8, 1, 1); // drum enabled
         const prog = Program.fromUnpacked(unpacked);
-        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x02, 0, prog.toUnpacked())), 0);
       }
-      if (arr[0] === 0xF0 && arr[5] === 0x07) {
-        const num = arr[6];
+      if (arr[0] === 0xF0 && arr[5] === 0x09) {
         const eff = makeMinimalEffect();
-        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x08, 0, eff.toUnpacked())), 0);
       }
     });
 
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const body = document.getElementById('prog-info-body');
     expect(body.textContent).toContain('DrumProg');
@@ -1540,28 +1557,27 @@ describe('program info dialog', () => {
   });
 
   test('Effects tab shows mod and EQ for config 3', async () => {
-    // Override to return effect config 3 (with EQ)
+    // Override to return effect config 3 (with EQ) in edit buffer
     qsrOutput.send = jest.fn(function (data) {
       const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
       if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
         setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
       }
-      if (arr[0] === 0xF0 && arr[5] === 0x01) {
-        const num = arr[6];
-        const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
-        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+      if (arr[0] === 0xF0 && arr[5] === 0x03) {
+        const prog = makeMinimalProgram(`User 000`);
+        prog.effect = makeMinimalEffect(3);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x02, 0, prog.toUnpacked())), 0);
       }
-      if (arr[0] === 0xF0 && arr[5] === 0x07) {
-        const num = arr[6];
+      if (arr[0] === 0xF0 && arr[5] === 0x09) {
         const eff = makeMinimalEffect(3);
-        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x08, 0, eff.toUnpacked())), 0);
       }
     });
 
     await loadApp();
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const tabs = document.querySelectorAll('.prog-info-tab');
     tabs[4].click();
@@ -1587,22 +1603,7 @@ describe('MIDI modal', () => {
 });
 
 describe('mix info dialog', () => {
-  test('prog-info-btn in mix mode opens mix-info-modal', async () => {
-    await loadApp();
-    switchMode('mix');
-    await jest.advanceTimersByTimeAsync(500);
-
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
-
-    const modal = document.getElementById('mix-info-modal');
-    expect(modal.classList.contains('hidden')).toBe(false);
-    const body = document.getElementById('mix-info-body');
-    expect(body.textContent).toContain('Mix Name');
-    expect(body.textContent).toContain('User Mix 0');
-  });
-
-  test('mix info renders 16 channel tabs', async () => {
+  test('mix info renders 16 channel tabs via edit buffer', async () => {
     // Create a mix with 2 enabled channels to test tab switching
     qsrOutput.send = jest.fn(function (data) {
       const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -1636,8 +1637,8 @@ describe('mix info dialog', () => {
     switchMode('mix');
     await jest.advanceTimersByTimeAsync(500);
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const tabs = document.querySelectorAll('#mix-info-body .prog-info-tab');
     expect(tabs).toHaveLength(16);
@@ -1646,12 +1647,35 @@ describe('mix info dialog', () => {
   });
 
   test('close button closes mix-info-modal', async () => {
+    // Set up mix edit buffer reply
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x01) {
+        const num = arr[6];
+        const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        const num = arr[6];
+        const eff = makeMinimalEffect();
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x0F) {
+        const num = arr[6];
+        const mix = makeMinimalMix(`TestMix`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x0E, num, mix.toUnpacked())), 0);
+      }
+    });
+
     await loadApp();
     switchMode('mix');
     await jest.advanceTimersByTimeAsync(500);
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const modal = document.getElementById('mix-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
@@ -1661,12 +1685,34 @@ describe('mix info dialog', () => {
   });
 
   test('Escape closes mix-info-modal', async () => {
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x01) {
+        const num = arr[6];
+        const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        const num = arr[6];
+        const eff = makeMinimalEffect();
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x0F) {
+        const num = arr[6];
+        const mix = makeMinimalMix(`TestMix`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x0E, num, mix.toUnpacked())), 0);
+      }
+    });
+
     await loadApp();
     switchMode('mix');
     await jest.advanceTimersByTimeAsync(500);
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const modal = document.getElementById('mix-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
@@ -1676,12 +1722,34 @@ describe('mix info dialog', () => {
   });
 
   test('backdrop click closes mix-info-modal', async () => {
+    qsrOutput.send = jest.fn(function (data) {
+      const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+      if (arr[0] === 0xF0 && arr[1] === 0x7E && arr[4] === 0x01) {
+        setTimeout(() => qsrInput.receive(QSR_IDENTITY_REPLY), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x01) {
+        const num = arr[6];
+        const prog = makeMinimalProgram(`User ${String(num).padStart(3, '0')}`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x00, num, prog.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x07) {
+        const num = arr[6];
+        const eff = makeMinimalEffect();
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x06, num, eff.toUnpacked())), 0);
+      }
+      if (arr[0] === 0xF0 && arr[5] === 0x0F) {
+        const num = arr[6];
+        const mix = makeMinimalMix(`TestMix`);
+        setTimeout(() => qsrInput.receive(buildSysexReply(0x0E, num, mix.toUnpacked())), 0);
+      }
+    });
+
     await loadApp();
     switchMode('mix');
     await jest.advanceTimersByTimeAsync(500);
 
-    document.getElementById('prog-info-btn').click();
-    await jest.advanceTimersByTimeAsync(500);
+    document.getElementById('edit-buf-btn').click();
+    await waitForProgramLoad();
 
     const modal = document.getElementById('mix-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
@@ -1727,6 +1795,207 @@ describe('mix info dialog', () => {
   });
 });
 
+// --- Enhanced Search (unassigned patches + stored filter) ---
+
+async function seedUnassignedProgram(name) {
+  const prog = makeMinimalProgram(name);
+  await prog.computeHash();
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('program-data', 'readwrite');
+    tx.objectStore('program-data').put({
+      hash: prog.hash,
+      programUnpacked: prog.toUnpacked(),
+      effectUnpacked: prog.effect ? prog.effect.toUnpacked() : null,
+    });
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+  return prog;
+}
+
+async function seedUnassignedMix(name) {
+  const mix = makeMinimalMix(name);
+  await mix.computeHash();
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('mix-data', 'readwrite');
+    tx.objectStore('mix-data').put({
+      hash: mix.hash,
+      mixUnpacked: mix.toUnpacked(),
+    });
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+  return mix;
+}
+
+function setFilterStored(value) {
+  const sel = document.getElementById('filter-stored');
+  sel.value = value;
+  sel.dispatchEvent(new Event('change'));
+}
+
+describe('enhanced search', () => {
+  test('stored filter defaults to "stored"', async () => {
+    await loadApp();
+    expect(document.getElementById('filter-stored').value).toBe('stored');
+  });
+
+  test('unassigned program appears when filter is "all"', async () => {
+    await seedUnassignedProgram('OrphanProg');
+    await loadApp();
+    openSearch();
+    setFilterStored('all');
+
+    const input = document.getElementById('search-input');
+    input.value = 'OrphanProg';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBe(1);
+    expect(items[0].textContent).toContain('OrphanProg');
+  });
+
+  test('unassigned program appears when filter is "unstored"', async () => {
+    await seedUnassignedProgram('OrphanPrg');
+    await loadApp();
+    openSearch();
+    setFilterStored('unstored');
+
+    const input = document.getElementById('search-input');
+    input.value = 'OrphanPrg';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBe(1);
+    expect(items[0].textContent).toContain('OrphanPrg');
+  });
+
+  test('unassigned program hidden when filter is "stored"', async () => {
+    await seedUnassignedProgram('OrphanHide');
+    await loadApp();
+    openSearch();
+
+    const input = document.getElementById('search-input');
+    input.value = 'OrphanHide';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBe(0);
+  });
+
+  test('unassigned patches grouped under "Unassigned" header', async () => {
+    await seedUnassignedProgram('OrphanGrp');
+    await loadApp();
+    openSearch();
+    setFilterStored('unstored');
+
+    const input = document.getElementById('search-input');
+    input.value = 'OrphanGrp';
+    input.dispatchEvent(new Event('input'));
+
+    const headers = document.querySelectorAll('.search-group-header');
+    expect(headers.length).toBe(1);
+    expect(headers[0].textContent).toBe('PROG — Unassigned');
+  });
+
+  test('selecting unassigned program sends edit buffer SysEx', async () => {
+    const prog = await seedUnassignedProgram('EditBufPrg');
+    await loadApp();
+    for (let i = 0; i < 5; i++) await jest.advanceTimersByTimeAsync(100);
+    openSearch();
+    setFilterStored('unstored');
+
+    const input = document.getElementById('search-input');
+    input.value = 'EditBufPrg';
+    input.dispatchEvent(new Event('input'));
+
+    qsrOutput.send.mockClear();
+    const items = document.querySelectorAll('.search-result-item');
+    items[0].click();
+    for (let i = 0; i < 10; i++) await jest.advanceTimersByTimeAsync(100);
+
+    // Should have sent edit program SysEx (opcode 0x02)
+    const calls = qsrOutput.send.mock.calls;
+    const editProgCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      return d[0] === 0xF0 && d[5] === 0x02;
+    });
+    expect(editProgCall).toBeTruthy();
+
+    // Should also have sent edit effects (opcode 0x08)
+    const editEffCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      return d[0] === 0xF0 && d[5] === 0x08;
+    });
+    expect(editEffCall).toBeTruthy();
+
+    // Should update LCD name
+    expect(document.getElementById('lcd-name').textContent).toBe('EditBufPrg');
+  });
+
+  test('selecting unassigned mix sends edit buffer SysEx', async () => {
+    const mix = await seedUnassignedMix('EditMixBf');
+    await loadApp();
+    for (let i = 0; i < 5; i++) await jest.advanceTimersByTimeAsync(100);
+    openSearch();
+    setFilterStored('unstored');
+
+    // Show mixes only
+    const filterProg = document.getElementById('filter-prog');
+    filterProg.checked = false;
+    filterProg.dispatchEvent(new Event('change'));
+
+    const input = document.getElementById('search-input');
+    input.value = 'EditMixBf';
+    input.dispatchEvent(new Event('input'));
+
+    qsrOutput.send.mockClear();
+    const items = document.querySelectorAll('.search-result-item');
+    items[0].click();
+    for (let i = 0; i < 10; i++) await jest.advanceTimersByTimeAsync(100);
+
+    // Should have sent mix SysEx (opcode 0x0E) with mixNum=100
+    const calls = qsrOutput.send.mock.calls;
+    const editMixCall = calls.find(c => {
+      const d = c[0] instanceof Uint8Array ? c[0] : new Uint8Array(c[0]);
+      return d[0] === 0xF0 && d[5] === 0x0E && d[6] === 100;
+    });
+    expect(editMixCall).toBeTruthy();
+    expect(document.getElementById('lcd-name').textContent).toBe('EditMixBf');
+  });
+
+  test('selecting assigned patch sends bank select + PC', async () => {
+    await loadApp();
+    openSearch();
+
+    const input = document.getElementById('search-input');
+    input.value = 'TrueStereo';
+    input.dispatchEvent(new Event('input'));
+
+    qsrOutput.send.mockClear();
+    const items = document.querySelectorAll('.search-result-item');
+    items[0].click();
+    await jest.advanceTimersByTimeAsync(100);
+
+    // Should have sent bank select (CC#0)
+    const calls = qsrOutput.send.mock.calls;
+    const bankCall = calls.find(c => {
+      const d = Array.isArray(c[0]) ? c[0] : Array.from(c[0]);
+      return (d[0] & 0xF0) === 0xB0 && d[1] === 0x00;
+    });
+    expect(bankCall).toBeTruthy();
+
+    // Should have sent program change
+    const pcCall = calls.find(c => {
+      const d = Array.isArray(c[0]) ? c[0] : Array.from(c[0]);
+      return (d[0] & 0xF0) === 0xC0;
+    });
+    expect(pcCall).toBeTruthy();
+  });
+});
+
 describe('SysEx file viewer', () => {
   function buildSyxFile(messages) {
     const totalLen = messages.reduce((sum, m) => sum + m.length, 0);
@@ -1755,7 +2024,7 @@ describe('SysEx file viewer', () => {
     const buf = buildSyxFile([progMsg]);
 
     triggerFileLoad(buf);
-    await jest.advanceTimersByTimeAsync(500);
+    for (let i = 0; i < 10; i++) await jest.advanceTimersByTimeAsync(100);
 
     const body = document.getElementById('syx-viewer-body');
     expect(body.textContent).toContain('SyxProg');
@@ -1771,7 +2040,7 @@ describe('SysEx file viewer', () => {
     const buf = buildSyxFile([mixMsg, effMsg]);
 
     triggerFileLoad(buf);
-    await jest.advanceTimersByTimeAsync(500);
+    for (let i = 0; i < 10; i++) await jest.advanceTimersByTimeAsync(100);
 
     const body = document.getElementById('syx-viewer-body');
     expect(body.textContent).toContain('SyxMix');
@@ -1783,7 +2052,7 @@ describe('SysEx file viewer', () => {
     const prog = makeMinimalProgram('CloseTest');
     const buf = buildSyxFile([buildSysexReply(0x00, 0, prog.toUnpacked())]);
     triggerFileLoad(buf);
-    await jest.advanceTimersByTimeAsync(500);
+    for (let i = 0; i < 10; i++) await jest.advanceTimersByTimeAsync(100);
 
     const modal = document.getElementById('syx-viewer-modal');
     expect(modal.classList.contains('hidden')).toBe(false);

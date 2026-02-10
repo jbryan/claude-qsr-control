@@ -1,9 +1,8 @@
 import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestGlobalData, unpackQSData } from './midi.js';
 import { logSend } from './midi-log.js';
-import { getPresetName, getAllPresets } from './presets.js';
 import { getKeyboardSampleName, getDrumSampleName } from './samples.js';
-import { getNestedField, Program, Mix, Effect, readProgram, readMix, readEditProgram, readEditMix } from './models.js';
-import { putProgram, putMix, getAllNames, hasData } from './store.js';
+import { getNestedField, Program, Mix, Effect, readProgram, readMix, readEditProgram, readEditMix, writeEditProgram, writeEditMix } from './models.js';
+import { putProgram, putMix, getAllNames, hasData, getAllPatchEntries, getProgramByHash, getMixByHash } from './store.js';
 
 const deviceSelect = document.getElementById('device-select');
 const identifyBtn = document.getElementById('identify-btn');
@@ -28,7 +27,6 @@ const globalsModal = document.getElementById('globals-modal');
 const globalsBody = document.getElementById('globals-body');
 const globalsClose = document.getElementById('globals-close');
 const editBufBtn = document.getElementById('edit-buf-btn');
-const progInfoBtn = document.getElementById('prog-info-btn');
 const progInfoModal = document.getElementById('prog-info-modal');
 const progInfoBody = document.getElementById('prog-info-body');
 const progInfoClose = document.getElementById('prog-info-close');
@@ -53,64 +51,122 @@ let currentPatch = 0;
 let currentPatchName = '';
 let nameFetchId = 0;
 
-const allPresets = getAllPresets();
 let searchHighlight = -1;
 
 const STORAGE_KEY = 'qsr-control-state';
 let userBankCache = null;
+let fullPatchCache = null;
+const filterStored = document.getElementById('filter-stored');
 
 async function loadUserBankCache() {
   userBankCache = await getAllNames();
+  fullPatchCache = await getAllPatchEntries();
 }
 
 // Migration: discard old localStorage name-only cache
 try { localStorage.removeItem('qsr-user-banks'); } catch { /* ignore */ }
 
-function getUserBankPresets() {
-  if (!userBankCache) return [];
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getAllSearchablePatches() {
+  if (!fullPatchCache) return [];
+  const filter = filterStored.value;
   const results = [];
-  for (const p of userBankCache.programs) {
-    if (p.name) results.push({ mode: 'prog', bank: 0, patch: p.number, name: p.name });
+
+  for (const p of fullPatchCache.programs) {
+    const stored = p.assignments.length > 0;
+    if (filter === 'stored' && !stored) continue;
+    if (filter === 'unstored' && stored) continue;
+
+    if (stored) {
+      for (const a of p.assignments) {
+        results.push({ mode: 'prog', bank: a.bank, patch: a.number, name: p.name, hash: p.hash, stored: true });
+      }
+    } else {
+      results.push({ mode: 'prog', name: p.name, hash: p.hash, stored: false });
+    }
   }
-  for (const m of userBankCache.mixes) {
-    if (m.name) results.push({ mode: 'mix', bank: 0, patch: m.number, name: m.name });
+
+  for (const m of fullPatchCache.mixes) {
+    const stored = m.assignments.length > 0;
+    if (filter === 'stored' && !stored) continue;
+    if (filter === 'unstored' && stored) continue;
+
+    if (stored) {
+      for (const a of m.assignments) {
+        results.push({ mode: 'mix', bank: a.bank, patch: a.number, name: m.name, hash: m.hash, stored: true });
+      }
+    } else {
+      results.push({ mode: 'mix', name: m.name, hash: m.hash, stored: false });
+    }
   }
   return results;
 }
 
-async function refreshUserBanks() {
+async function refreshAllBanks() {
   if (!activeDevice) return;
   refreshBtn.disabled = true;
-  const total = 228;
+  const out = activeDevice.device.output;
+  const inp = activeDevice.device.input;
+  const total = 5 * 128 + 5 * 100; // 1140
+  let done = 0;
 
+  // Phase 1 — User bank (bank 0): direct SysEx dump
   for (let i = 0; i < 128; i++) {
-    lcdLine1.textContent = `Refreshing ${i + 1}/${total}...`;
+    lcdLine1.textContent = `Refreshing ${++done}/${total}...`;
     try {
-      const program = await readProgram(
-        activeDevice.device.output,
-        activeDevice.device.input,
-        i,
-      );
-      await putProgram(i, program);
-    } catch {
-      // Skip failed reads
-    }
+      const program = await readProgram(out, inp, i);
+      await putProgram(0, i, program);
+    } catch { /* skip */ }
   }
-
   for (let i = 0; i < 100; i++) {
-    lcdLine1.textContent = `Refreshing ${128 + i + 1}/${total}...`;
+    lcdLine1.textContent = `Refreshing ${++done}/${total}...`;
     try {
-      const mix = await readMix(
-        activeDevice.device.output,
-        activeDevice.device.input,
-        i,
-      );
-      await putMix(i, mix);
-    } catch {
-      // Skip failed reads
+      const mix = await readMix(out, inp, i);
+      await putMix(0, i, mix);
+    } catch { /* skip */ }
+  }
+
+  // Phase 2 — Preset program banks 1-4 via edit buffer
+  sendModeSelect(out, 0); // prog mode
+  sendMidiProgramSelect(out, 1); // On
+  await delay(50);
+  for (let bank = 1; bank <= 4; bank++) {
+    for (let i = 0; i < 128; i++) {
+      lcdLine1.textContent = `Refreshing ${++done}/${total}...`;
+      try {
+        sendBankSelect(out, MIDI_CHANNEL, bank);
+        sendProgramChange(out, MIDI_CHANNEL, i);
+        await delay(100);
+        const program = await readEditProgram(out, inp);
+        await putProgram(bank, i, program);
+      } catch { /* skip */ }
     }
   }
 
+  // Phase 3 — Preset mix banks 1-4 via edit buffer
+  sendModeSelect(out, 1); // mix mode
+  sendMidiProgramSelect(out, 2); // Channel 1
+  await delay(50);
+  for (let bank = 1; bank <= 4; bank++) {
+    for (let i = 0; i < 100; i++) {
+      lcdLine1.textContent = `Refreshing ${++done}/${total}...`;
+      try {
+        sendBankSelect(out, MIDI_CHANNEL, bank);
+        sendProgramChange(out, MIDI_CHANNEL, i);
+        await delay(50);
+        const mix = await readEditMix(out, inp);
+        await putMix(bank, i, mix);
+      } catch { /* skip */ }
+    }
+  }
+
+  // Phase 4 — Restore current state
+  sendModeSelect(out, currentMode === 'prog' ? 0 : 1);
+  sendMidiProgramSelect(out, currentMode === 'prog' ? 1 : 2);
+  sendBankAndPatch();
   await loadUserBankCache();
   refreshBtn.disabled = false;
   if (activeDevice) {
@@ -170,43 +226,56 @@ async function fetchPatchName() {
   updateLCD();
   if (!activeDevice) return;
 
-  // Non-User banks have static preset names — no SysEx needed.
-  const preset = getPresetName(currentMode, currentBank, currentPatch);
-  if (preset) {
-    if (id !== nameFetchId) return;
-    currentPatchName = preset;
-    updateLCD();
-    return;
+  // Check IndexedDB cache first (any bank)
+  if (userBankCache) {
+    const list = currentMode === 'prog' ? userBankCache.programs : userBankCache.mixes;
+    const cached = list.find(e => e.bank === currentBank && e.number === currentPatch);
+    if (cached && cached.name) {
+      currentPatchName = cached.name;
+      updateLCD();
+      return;
+    }
   }
 
-  // User bank: fetch full dump, cache to IndexedDB, and extract name from model.
-  if (currentBank !== 0) return;
+  // Cache miss — fetch from hardware
   try {
-    if (currentMode === 'prog') {
-      const program = await readProgram(
-        activeDevice.device.output,
-        activeDevice.device.input,
-        currentPatch,
-      );
-      if (id !== nameFetchId) return;
-      currentPatchName = program.name;
-      updateLCD();
-      await putProgram(currentPatch, program);
-      await loadUserBankCache();
+    if (currentBank === 0) {
+      // User bank: direct SysEx dump
+      if (currentMode === 'prog') {
+        const program = await readProgram(activeDevice.device.output, activeDevice.device.input, currentPatch);
+        if (id !== nameFetchId) return;
+        currentPatchName = program.name;
+        updateLCD();
+        await putProgram(0, currentPatch, program);
+        await loadUserBankCache();
+      } else {
+        const mix = await readMix(activeDevice.device.output, activeDevice.device.input, currentPatch);
+        if (id !== nameFetchId) return;
+        currentPatchName = mix.name;
+        updateLCD();
+        await putMix(0, currentPatch, mix);
+        await loadUserBankCache();
+      }
     } else {
-      const mix = await readMix(
-        activeDevice.device.output,
-        activeDevice.device.input,
-        currentPatch,
-      );
-      if (id !== nameFetchId) return;
-      currentPatchName = mix.name;
-      updateLCD();
-      await putMix(currentPatch, mix);
-      await loadUserBankCache();
+      // Preset banks: sendBankAndPatch already loaded the patch into the edit buffer
+      if (currentMode === 'prog') {
+        const program = await readEditProgram(activeDevice.device.output, activeDevice.device.input);
+        if (id !== nameFetchId) return;
+        currentPatchName = program.name;
+        updateLCD();
+        await putProgram(currentBank, currentPatch, program);
+        await loadUserBankCache();
+      } else {
+        const mix = await readEditMix(activeDevice.device.output, activeDevice.device.input);
+        if (id !== nameFetchId) return;
+        currentPatchName = mix.name;
+        updateLCD();
+        await putMix(currentBank, currentPatch, mix);
+        await loadUserBankCache();
+      }
     }
   } catch {
-    // Timeout or unknown bank — leave name blank
+    // Timeout — leave name blank
   }
 }
 
@@ -225,8 +294,6 @@ function maxPatch() {
 }
 
 function updateProgInfoVisibility() {
-  const show = activeDevice && currentBank === 0;
-  progInfoBtn.classList.toggle('hidden', !show);
   editBufBtn.classList.toggle('hidden', !activeDevice);
 }
 
@@ -352,7 +419,7 @@ async function autoScan() {
     sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0);
     restoreOrDefaultState();
     await loadUserBankCache();
-    if (!(await hasData())) refreshUserBanks();
+    if (!(await hasData())) refreshAllBanks();
   } else {
     activeDevice = null;
     updateModeSelect();
@@ -380,7 +447,7 @@ async function handleIdentify() {
     sendGlobalParam(activeDevice.device.output, 0, 0, 1, 0); // GM off
     restoreOrDefaultState();
     await loadUserBankCache();
-    if (!(await hasData())) refreshUserBanks();
+    if (!(await hasData())) refreshAllBanks();
   } catch (err) {
     setStatus(err.message, 'error');
   } finally {
@@ -415,7 +482,7 @@ lcdName.addEventListener('click', () => {
   if (activeDevice) openSearch();
 });
 rescanBtn.addEventListener('click', () => autoScan());
-refreshBtn.addEventListener('click', () => refreshUserBanks());
+refreshBtn.addEventListener('click', () => refreshAllBanks());
 midiBtn.addEventListener('click', () => {
   midiModal.classList.remove('hidden');
 });
@@ -447,7 +514,7 @@ function renderSearchResults(query) {
   const lower = query.toLowerCase();
   const showProg = filterProg.checked;
   const showMix = filterMix.checked;
-  const combined = [...getUserBankPresets(), ...allPresets];
+  const combined = getAllSearchablePatches();
   const matches = combined.filter(p => {
     if (p.mode === 'prog' && !showProg) return false;
     if (p.mode === 'mix' && !showMix) return false;
@@ -458,8 +525,9 @@ function renderSearchResults(query) {
   let lastGroup = '';
   for (const p of matches) {
     const modeName = p.mode === 'prog' ? 'PROG' : 'MIX';
-    const bankName = bankNames[p.bank] || `Bank ${p.bank}`;
-    const group = `${modeName} — ${bankName}`;
+    const group = p.stored
+      ? `${modeName} — ${bankNames[p.bank] || `Bank ${p.bank}`}`
+      : `${modeName} — Unassigned`;
     if (group !== lastGroup) {
       lastGroup = group;
       const header = document.createElement('li');
@@ -467,12 +535,17 @@ function renderSearchResults(query) {
       header.textContent = group;
       searchResults.appendChild(header);
     }
-    const patchNum = String(p.patch).padStart(3, '0');
     const li = document.createElement('li');
     li.className = 'search-result-item';
-    li.innerHTML =
-      `<span class="search-result-name">${escapeHTML(p.name)}</span>` +
-      `<span class="search-result-meta">#${patchNum}</span>`;
+    if (p.stored) {
+      const patchNum = String(p.patch).padStart(3, '0');
+      li.innerHTML =
+        `<span class="search-result-name">${escapeHTML(p.name)}</span>` +
+        `<span class="search-result-meta">#${patchNum}</span>`;
+    } else {
+      li.innerHTML =
+        `<span class="search-result-name">${escapeHTML(p.name)}</span>`;
+    }
     li.addEventListener('click', () => selectSearchResult(p));
     searchResults.appendChild(li);
   }
@@ -484,20 +557,49 @@ function escapeHTML(str) {
   return div.innerHTML;
 }
 
-function selectSearchResult(p) {
+async function selectSearchResult(p) {
   closeSearch();
   if (!activeDevice) return;
-  if (p.mode !== currentMode) {
-    activateMode(p.mode);
+
+  if (p.stored) {
+    if (p.mode !== currentMode) {
+      activateMode(p.mode);
+    }
+    if (p.bank !== currentBank) {
+      currentBank = p.bank;
+    }
+    currentPatch = p.patch;
+    updateBankPatchUI();
+    sendBankAndPatch();
+    fetchPatchName();
+    saveState();
+  } else {
+    if (p.mode === 'prog') {
+      const program = await getProgramByHash(p.hash);
+      if (!program) return;
+      if (currentMode !== 'prog') {
+        sendModeSelect(activeDevice.device.output, 0);
+        sendMidiProgramSelect(activeDevice.device.output, 1);
+        currentMode = 'prog';
+        updateModeSelect();
+      }
+      await writeEditProgram(activeDevice.device.output, program);
+      currentPatchName = program.name;
+      lcdName.textContent = currentPatchName;
+    } else {
+      const mix = await getMixByHash(p.hash);
+      if (!mix) return;
+      if (currentMode !== 'mix') {
+        sendModeSelect(activeDevice.device.output, 1);
+        sendMidiProgramSelect(activeDevice.device.output, 2);
+        currentMode = 'mix';
+        updateModeSelect();
+      }
+      await writeEditMix(activeDevice.device.output, mix);
+      currentPatchName = mix.name;
+      lcdName.textContent = currentPatchName;
+    }
   }
-  if (p.bank !== currentBank) {
-    currentBank = p.bank;
-  }
-  currentPatch = p.patch;
-  updateBankPatchUI();
-  sendBankAndPatch();
-  fetchPatchName();
-  saveState();
 }
 
 function updateSearchHighlight() {
@@ -518,6 +620,7 @@ function refreshSearch() {
 searchInput.addEventListener('input', refreshSearch);
 filterProg.addEventListener('change', refreshSearch);
 filterMix.addEventListener('change', refreshSearch);
+filterStored.addEventListener('change', refreshSearch);
 
 searchInput.addEventListener('keydown', (e) => {
   const items = searchResults.querySelectorAll('.search-result-item');
@@ -1029,10 +1132,8 @@ async function openProgInfo() {
       currentPatch,
     );
     renderProgInfo(program);
-    if (currentBank === 0) {
-      await putProgram(currentPatch, program);
-      await loadUserBankCache();
-    }
+    await putProgram(currentBank, currentPatch, program);
+    await loadUserBankCache();
   } catch {
     progInfoBody.innerHTML = '<p class="globals-loading">Failed to read program data.</p>';
   }
@@ -1042,11 +1143,6 @@ function closeProgInfo() {
   progInfoModal.classList.add('hidden');
 }
 
-progInfoBtn.addEventListener('click', () => {
-  if (currentMode === 'mix') openMixInfo();
-  else openProgInfo();
-});
-
 editBufBtn.addEventListener('click', async () => {
   if (!activeDevice) return;
   if (currentMode === 'mix') {
@@ -1055,6 +1151,8 @@ editBufBtn.addEventListener('click', async () => {
     try {
       const mix = await readEditMix(activeDevice.device.output, activeDevice.device.input);
       renderMixInfo(mix);
+      await putMix(currentBank, currentPatch, mix);
+      await loadUserBankCache();
     } catch {
       mixInfoBody.innerHTML = '<p class="globals-loading">Failed to read edit buffer.</p>';
     }
@@ -1064,6 +1162,8 @@ editBufBtn.addEventListener('click', async () => {
     try {
       const program = await readEditProgram(activeDevice.device.output, activeDevice.device.input);
       renderProgInfo(program);
+      await putProgram(currentBank, currentPatch, program);
+      await loadUserBankCache();
     } catch {
       progInfoBody.innerHTML = '<p class="globals-loading">Failed to read edit buffer.</p>';
     }
@@ -1180,10 +1280,8 @@ async function openMixInfo() {
       currentPatch,
     );
     renderMixInfo(mix);
-    if (currentBank === 0) {
-      await putMix(currentPatch, mix);
-      await loadUserBankCache();
-    }
+    await putMix(currentBank, currentPatch, mix);
+    await loadUserBankCache();
   } catch {
     mixInfoBody.innerHTML = '<p class="globals-loading">Failed to read mix data.</p>';
   }
@@ -1368,13 +1466,13 @@ async function sendSyxToDevice() {
     }
   }
 
-  // Cache sent programs and mixes to IndexedDB
+  // Cache sent programs and mixes to IndexedDB (SysEx files target User bank)
   for (const p of currentSyxParsed.programs) {
-    await putProgram(p.num, p.program);
+    await putProgram(0, p.num, p.program);
   }
   const mixes = currentSyxParsed.newMixes.length > 0 ? currentSyxParsed.newMixes : currentSyxParsed.oldMixes;
   for (const m of mixes) {
-    await putMix(m.num, m.mix);
+    await putMix(0, m.num, m.mix);
   }
   if (currentSyxParsed.programs.length || mixes.length) {
     await loadUserBankCache();

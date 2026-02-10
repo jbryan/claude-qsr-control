@@ -1,4 +1,4 @@
-import { unpackQSData, packQSData, requestUserProgram, requestEditProgram, requestNewMix, sendUserProgram, sendNewMix, requestUserEffects, sendUserEffects, requestEditEffects, sendEditEffects } from './midi.js';
+import { unpackQSData, packQSData, requestUserProgram, requestEditProgram, requestNewMix, sendUserProgram, sendEditProgram, sendNewMix, requestUserEffects, sendUserEffects, requestEditEffects, sendEditEffects } from './midi.js';
 
 // --- Bit helpers ---
 
@@ -220,6 +220,13 @@ export function getNestedField(obj, path) {
   return target;
 }
 
+export async function computeSHA256(byteArray) {
+  const buffer = new Uint8Array(byteArray);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 function parseKeyboardSound(unpacked, baseBitOff) {
   const sound = {
     sample: {},
@@ -343,6 +350,13 @@ export class Program {
 
     return unpacked;
   }
+
+  async computeHash() {
+    const progBytes = this.toUnpacked();
+    const effectBytes = this.effect ? this.effect.toUnpacked() : new Array(65).fill(0);
+    this.hash = await computeSHA256([...progBytes, ...effectBytes]);
+    return this.hash;
+  }
 }
 
 // --- Mix class ---
@@ -426,6 +440,11 @@ export class Mix {
     }
 
     return unpacked;
+  }
+
+  async computeHash() {
+    this.hash = await computeSHA256(this.toUnpacked());
+    return this.hash;
   }
 }
 
@@ -806,6 +825,7 @@ export async function readProgram(output, input, programNum) {
   const program = Program.fromSysex(response);
   const effectResponse = await requestUserEffects(output, input, programNum);
   program.effect = Effect.fromSysex(effectResponse);
+  await program.computeHash();
   return program;
 }
 
@@ -817,7 +837,9 @@ export async function writeProgram(output, programNum, program) {
 
 export async function readMix(output, input, mixNum) {
   const response = await requestNewMix(output, input, mixNum);
-  return Mix.fromSysex(response);
+  const mix = Mix.fromSysex(response);
+  await mix.computeHash();
+  return mix;
 }
 
 export async function writeMix(output, mixNum, mix) {
@@ -831,12 +853,15 @@ export async function readEditProgram(output, input) {
   const program = Program.fromSysex(response);
   const effectResponse = await requestEditEffects(output, input, 0);
   program.effect = Effect.fromSysex(effectResponse);
+  await program.computeHash();
   return program;
 }
 
 export async function readEditMix(output, input) {
   const response = await requestNewMix(output, input, 100);
-  return Mix.fromSysex(response);
+  const mix = Mix.fromSysex(response);
+  await mix.computeHash();
+  return mix;
 }
 
 export async function readEffect(output, input, effectNum) {
@@ -859,4 +884,21 @@ export async function writeEditEffect(output, editNum, effect) {
   const unpacked = effect.toUnpacked();
   const packed = packQSData(unpacked);
   sendEditEffects(output, editNum, new Uint8Array(packed));
+}
+
+export async function writeEditProgram(output, program) {
+  const unpacked = program.toUnpacked();
+  const packed = packQSData(unpacked);
+  sendEditProgram(output, 0, new Uint8Array(packed));
+  if (program.effect) {
+    const effUnpacked = program.effect.toUnpacked();
+    const effPacked = packQSData(effUnpacked);
+    sendEditEffects(output, 0, new Uint8Array(effPacked));
+  }
+}
+
+export async function writeEditMix(output, mix) {
+  const unpacked = mix.toUnpacked();
+  const packed = packQSData(unpacked);
+  sendNewMix(output, 100, new Uint8Array(packed));
 }

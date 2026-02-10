@@ -1,4 +1,4 @@
-const CACHE_NAME = 'qsr-control-v3';
+const CACHE_NAME = 'qsr-control-v4';
 const ASSETS = [
   '/',
   '/index.html',
@@ -6,7 +6,6 @@ const ASSETS = [
   '/js/app.js',
   '/js/midi.js',
   '/js/midi-log.js',
-  '/js/presets.js',
   '/manifest.json',
   '/favicon.ico',
   '/icons/icon-192.png',

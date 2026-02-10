@@ -1,9 +1,17 @@
 import { jest } from '@jest/globals';
+import { webcrypto } from 'crypto';
 import 'fake-indexeddb/auto';
 
 // Polyfill structuredClone for jsdom (used by fake-indexeddb)
 if (typeof globalThis.structuredClone === 'undefined') {
   globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
+}
+
+// Polyfill SubtleCrypto for jsdom
+if (typeof globalThis.crypto === 'undefined') {
+  globalThis.crypto = webcrypto;
+} else if (!globalThis.crypto.subtle) {
+  globalThis.crypto.subtle = webcrypto.subtle;
 }
 
 // Mock Web MIDI API
