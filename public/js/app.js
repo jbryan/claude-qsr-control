@@ -1165,6 +1165,33 @@ function renderSectionBlock(label, rowsHtml) {
     `</tbody></table></div>`;
 }
 
+function defaultKeyboard() {
+  return {
+    sample: { group: 0, number: 0 },
+    level: { volume: 99, pan: 0, output: 0, effectLevel: 0, effectBus: 0 },
+    pitch: { semitone: 0, detune: 0, detuneType: 0, pitchWheelMod: 0, aftertouchMod: 0, lfoMod: 0, envMod: 0, portamentoMode: 0, portamentoRate: 0, keyMode: 0 },
+    filter: { frequency: 0, keyboardTrack: 0, velocityMod: 0, pitchWheelMod: 0, aftertouchMod: 0, lfoMod: 0, envMod: 0 },
+    amp: { velocityCurve: 0, aftertouchMod: 0, lfoMod: 0 },
+    noteRange: { lowNote: 0, highNote: 127, overlap: 0 },
+    mods: Array.from({ length: 6 }, () => ({ source: 0, destination: 0, amplitude: 0, gate: 0 })),
+    pitchLfo: { waveform: 0, speed: 0, delay: 0, trigger: 0, level: 0, modWheelMod: 0, aftertouchMod: 0 },
+    filterLfo: { waveform: 0, speed: 0, delay: 0, trigger: 0, level: 0, modWheelMod: 0, aftertouchMod: 0 },
+    ampLfo: { waveform: 0, speed: 0, delay: 0, trigger: 0, level: 0, modWheelMod: 0, aftertouchMod: 0 },
+    pitchEnv: { attack: 0, decay: 0, sustain: 0, release: 0, delay: 0, sustainDecay: 0, triggerType: 0, timeTrack: 0, sustainPedal: 0, level: 0, velocityMod: 0 },
+    filterEnv: { attack: 0, decay: 0, sustain: 0, release: 0, delay: 0, sustainDecay: 0, triggerType: 0, timeTrack: 0, sustainPedal: 0, level: 0, velocityMod: 0 },
+    ampEnv: { attack: 0, decay: 0, sustain: 99, release: 0, delay: 0, sustainDecay: 0, triggerType: 0, timeTrack: 0, sustainPedal: 0, level: 0 },
+    tracking: { input: 0, points: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }
+  };
+}
+
+function defaultDrums() {
+  return Array.from({ length: 10 }, () => ({
+    sampleGroup: 0, sampleNumber: 0, volume: 0, pan: 0, output: 0,
+    effectLevel: 0, effectBus: 0, pitch: 0, pitchVelMod: 0, filterVelMod: 0,
+    velocityCurve: 0, noteNumber: 0, ampEnvDecay: 0, muteGroup: 0, noteRange: 0
+  }));
+}
+
 function renderKeyboardSound(keyboard, soundIndex) {
   const si = `data-sound="${soundIndex}"`;
   // Sample dropdown
@@ -1300,12 +1327,14 @@ function renderProgInfo(program) {
     const snd = program.sounds[s];
     const active = s === 0 ? ' active' : '';
     html += `<div class="prog-info-panel${active}" data-panel="${s}">`;
-    // Sound enable checkbox
-    const enableFunc = snd.isDrum ? 9 : 16;
-    const modeLabel = snd.isDrum ? 'Drum' : 'Keyboard';
-    html += `<label class="sound-enable-label"><input type="checkbox" class="prog-edit-enable" ` +
-      `data-sound="${s}" data-func="${enableFunc}" ${snd.enabled ? 'checked' : ''}> ` +
-      `${modeLabel} Enabled</label>`;
+    // Sound enable checkbox + mode dropdown
+    html += `<div class="sound-enable-row">` +
+      `<label class="sound-enable-label"><input type="checkbox" class="prog-edit-enable" ` +
+      `data-sound="${s}" ${snd.enabled ? 'checked' : ''}> Enabled</label>` +
+      `<select class="prog-edit-mode" data-sound="${s}">` +
+      `<option value="keyboard"${!snd.isDrum ? ' selected' : ''}>Keyboard</option>` +
+      `<option value="drum"${snd.isDrum ? ' selected' : ''}>Drum</option></select>` +
+      `</div>`;
     html += `<div class="prog-info-sections sound-content"${!snd.enabled ? ' style="display:none"' : ''}>`;
     if (snd.isDrum) {
       html += renderDrumSound(snd.drums, s);
@@ -1378,12 +1407,58 @@ function renderProgInfo(program) {
       const snd = currentEditProgram.sounds[s];
       snd.enabled = cb.checked;
       const out = activeDevice.device.output;
-      const func = Number(cb.dataset.func);
+      const func = snd.isDrum ? 9 : 16;
       sendParamEdit(out, 2, func, s, 0, 0, 3, cb.checked ? 1 : 0);
       // Toggle content visibility
       const panel = cb.closest('.prog-info-panel');
       const content = panel?.querySelector('.sound-content');
       if (content) content.style.display = cb.checked ? '' : 'none';
+    });
+  });
+
+  // Wire up mode dropdowns
+  progInfoBody.querySelectorAll('.prog-edit-mode').forEach(sel => {
+    sel.addEventListener('change', () => {
+      if (!activeDevice || !currentEditProgram) return;
+      const s = Number(sel.dataset.sound);
+      const snd = currentEditProgram.sounds[s];
+      const newIsDrum = sel.value === 'drum';
+      if (newIsDrum === snd.isDrum) return;
+
+      // Update model
+      snd.isDrum = newIsDrum;
+      if (newIsDrum && !snd.drums) {
+        snd.drums = defaultDrums();
+        delete snd.keyboard;
+      } else if (!newIsDrum && !snd.keyboard) {
+        snd.keyboard = defaultKeyboard();
+        delete snd.drums;
+      }
+
+      // Send SysEx mode change
+      const out = activeDevice.device.output;
+      const func = newIsDrum ? 9 : 16;
+      sendParamEdit(out, 2, func, s, 0, 0, 0, newIsDrum ? 1 : 0);
+
+      // Re-send enable with correct func for new mode
+      sendParamEdit(out, 2, func, s, 0, 0, 3, snd.enabled ? 1 : 0);
+
+      // Re-render the sound content
+      const panel = sel.closest('.prog-info-panel');
+      const content = panel.querySelector('.sound-content');
+      content.innerHTML = newIsDrum
+        ? renderDrumSound(snd.drums, s)
+        : renderKeyboardSound(snd.keyboard, s);
+
+      // Re-set sample dropdown values (pipe workaround)
+      content.querySelectorAll('script-data[data-sample-select]').forEach(el => {
+        const select = el.previousElementSibling;
+        if (select) select.value = el.dataset.val;
+      });
+      content.querySelectorAll('script-data[data-drum-sample-select]').forEach(el => {
+        const select = el.previousElementSibling;
+        if (select) select.value = el.dataset.val;
+      });
     });
   });
 
@@ -1441,13 +1516,9 @@ function renderProgInfo(program) {
       el.nextElementSibling.textContent = noteName(rawVal);
     }
 
-    // Convert for SysEx: signed values sent as 2's complement
-    let midiVal = rawVal;
-    if (offset < 0) {
-      // This is a signed param — the raw stored value is unsigned (0-based),
-      // so just send the raw value directly
-      midiVal = rawVal;
-    }
+    // SysEx parameter edit expects display values in 2's complement
+    let midiVal = el.type === 'checkbox' ? rawVal : displayVal;
+    if (midiVal < 0) midiVal += 256;
 
     // For drums: send drum number first
     if (drumIdx >= 0) {
