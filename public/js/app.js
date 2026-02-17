@@ -57,6 +57,7 @@ const STORAGE_KEY = 'qsr-control-state';
 let userBankCache = null;
 let fullPatchCache = null;
 const filterStored = document.getElementById('filter-stored');
+const sortOrder = document.getElementById('sort-order');
 
 async function loadUserBankCache() {
   userBankCache = await getAllNames();
@@ -522,12 +523,41 @@ function renderSearchResults(query) {
     return true;
   });
   const bankNames = ['User', 'Preset 1', 'Preset 2', 'Preset 3', 'GenMIDI'];
+  const sort = sortOrder.value;
+  if (sort === 'bank') {
+    matches.sort((a, b) => {
+      if (a.mode !== b.mode) return a.mode === 'prog' ? -1 : 1;
+      if (a.stored !== b.stored) return a.stored ? -1 : 1;
+      if (a.stored && b.stored) {
+        if (a.bank !== b.bank) return a.bank - b.bank;
+        return a.patch - b.patch;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  } else if (sort === 'number') {
+    matches.sort((a, b) => {
+      if (a.mode !== b.mode) return a.mode === 'prog' ? -1 : 1;
+      if (a.stored !== b.stored) return a.stored ? -1 : 1;
+      if (a.stored && b.stored) return a.patch - b.patch;
+      return a.name.localeCompare(b.name);
+    });
+  } else {
+    matches.sort((a, b) => {
+      if (a.mode !== b.mode) return a.mode === 'prog' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
   let lastGroup = '';
   for (const p of matches) {
     const modeName = p.mode === 'prog' ? 'PROG' : 'MIX';
-    const group = p.stored
-      ? `${modeName} — ${bankNames[p.bank] || `Bank ${p.bank}`}`
-      : `${modeName} — Unassigned`;
+    let group;
+    if (sort === 'bank') {
+      group = p.stored
+        ? `${modeName} — ${bankNames[p.bank] || `Bank ${p.bank}`}`
+        : `${modeName} — Unassigned`;
+    } else {
+      group = modeName;
+    }
     if (group !== lastGroup) {
       lastGroup = group;
       const header = document.createElement('li');
@@ -539,9 +569,12 @@ function renderSearchResults(query) {
     li.className = 'search-result-item';
     if (p.stored) {
       const patchNum = String(p.patch).padStart(3, '0');
+      const meta = sort === 'bank'
+        ? `#${patchNum}`
+        : `${bankNames[p.bank] || `Bank ${p.bank}`} #${patchNum}`;
       li.innerHTML =
         `<span class="search-result-name">${escapeHTML(p.name)}</span>` +
-        `<span class="search-result-meta">#${patchNum}</span>`;
+        `<span class="search-result-meta">${meta}</span>`;
     } else {
       li.innerHTML =
         `<span class="search-result-name">${escapeHTML(p.name)}</span>`;
@@ -621,6 +654,7 @@ searchInput.addEventListener('input', refreshSearch);
 filterProg.addEventListener('change', refreshSearch);
 filterMix.addEventListener('change', refreshSearch);
 filterStored.addEventListener('change', refreshSearch);
+sortOrder.addEventListener('change', refreshSearch);
 
 searchInput.addEventListener('keydown', (e) => {
   const items = searchResults.querySelectorAll('.search-result-item');

@@ -96,6 +96,11 @@ function setupDOM() {
             <option value="stored" selected>Stored</option>
             <option value="unstored">Not Stored</option>
           </select>
+          <select id="sort-order" class="search-filter">
+            <option value="bank" selected>Sort: Bank</option>
+            <option value="number">Sort: Number</option>
+            <option value="name">Sort: Name</option>
+          </select>
         </div>
         <ul id="search-results"></ul>
       </div>
@@ -1836,6 +1841,12 @@ function setFilterStored(value) {
   sel.dispatchEvent(new Event('change'));
 }
 
+function setSortOrder(value) {
+  const sel = document.getElementById('sort-order');
+  sel.value = value;
+  sel.dispatchEvent(new Event('change'));
+}
+
 describe('enhanced search', () => {
   test('stored filter defaults to "stored"', async () => {
     await loadApp();
@@ -1993,6 +2004,138 @@ describe('enhanced search', () => {
       return (d[0] & 0xF0) === 0xC0;
     });
     expect(pcCall).toBeTruthy();
+  });
+});
+
+describe('search sort order', () => {
+  test('sort defaults to "bank"', async () => {
+    await loadApp();
+    expect(document.getElementById('sort-order').value).toBe('bank');
+  });
+
+  test('sort by bank groups by mode+bank with patches in order', async () => {
+    await loadApp();
+    openSearch();
+
+    const input = document.getElementById('search-input');
+    input.value = 'User 00';
+    input.dispatchEvent(new Event('input'));
+
+    const headers = document.querySelectorAll('.search-group-header');
+    expect(headers[0].textContent).toBe('PROG — User');
+
+    // Patches should be in ascending order
+    const items = document.querySelectorAll('.search-result-item');
+    const metas = Array.from(items).map(el => el.querySelector('.search-result-meta')?.textContent).filter(Boolean);
+    expect(metas.length).toBeGreaterThan(1);
+    for (let i = 1; i < metas.length; i++) {
+      expect(metas[i] >= metas[i - 1]).toBe(true);
+    }
+  });
+
+  test('sort by number shows all programs together sorted by patch number', async () => {
+    await loadApp();
+    openSearch();
+    setSortOrder('number');
+
+    // Uncheck mixes to only see programs
+    const filterMix = document.getElementById('filter-mix');
+    filterMix.checked = false;
+    filterMix.dispatchEvent(new Event('change'));
+
+    const headers = document.querySelectorAll('.search-group-header');
+    // Should be grouped by mode only (e.g. "PROG"), not by bank
+    const progHeaders = Array.from(headers).filter(h => h.textContent.includes('PROG'));
+    expect(progHeaders.length).toBe(1);
+    expect(progHeaders[0].textContent).toBe('PROG');
+
+    // Meta should include bank name
+    const items = document.querySelectorAll('.search-result-item');
+    const firstMeta = items[0].querySelector('.search-result-meta');
+    expect(firstMeta.textContent).toMatch(/User #\d{3}/);
+  });
+
+  test('sort by name shows results alphabetically within mode groups', async () => {
+    await loadApp();
+    openSearch();
+    setSortOrder('name');
+
+    // Only show programs
+    const filterMix = document.getElementById('filter-mix');
+    filterMix.checked = false;
+    filterMix.dispatchEvent(new Event('change'));
+
+    const headers = document.querySelectorAll('.search-group-header');
+    const progHeaders = Array.from(headers).filter(h => h.textContent.includes('PROG'));
+    expect(progHeaders.length).toBe(1);
+    expect(progHeaders[0].textContent).toBe('PROG');
+
+    // Names should be in alphabetical order
+    const items = document.querySelectorAll('.search-result-item');
+    const names = Array.from(items).map(el => el.querySelector('.search-result-name').textContent);
+    for (let i = 1; i < names.length; i++) {
+      expect(names[i].localeCompare(names[i - 1]) >= 0).toBe(true);
+    }
+  });
+
+  test('changing sort refreshes results', async () => {
+    await loadApp();
+    openSearch();
+
+    const resultsBefore = document.getElementById('search-results').innerHTML;
+    setSortOrder('name');
+    const resultsAfter = document.getElementById('search-results').innerHTML;
+
+    expect(resultsAfter).not.toBe(resultsBefore);
+  });
+
+  test('sort by number shows bank name in meta', async () => {
+    await loadApp();
+    openSearch();
+    setSortOrder('number');
+
+    const input = document.getElementById('search-input');
+    input.value = 'TrueStereo';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBe(1);
+    const meta = items[0].querySelector('.search-result-meta');
+    expect(meta.textContent).toBe('Preset 1 #000');
+  });
+
+  test('sort by name shows bank name in meta', async () => {
+    await loadApp();
+    openSearch();
+    setSortOrder('name');
+
+    const input = document.getElementById('search-input');
+    input.value = 'TrueStereo';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBe(1);
+    const meta = items[0].querySelector('.search-result-meta');
+    expect(meta.textContent).toBe('Preset 1 #000');
+  });
+
+  test('unassigned patches appear correctly in number sort', async () => {
+    await seedUnassignedProgram('ZOrphanSort');
+    await loadApp();
+    openSearch();
+    setFilterStored('all');
+    setSortOrder('number');
+
+    const input = document.getElementById('search-input');
+    input.value = 'ZOrphanSort';
+    input.dispatchEvent(new Event('input'));
+
+    const items = document.querySelectorAll('.search-result-item');
+    expect(items.length).toBe(1);
+    expect(items[0].textContent).toContain('ZOrphanSort');
+    // Should have no meta (unassigned)
+    const meta = items[0].querySelector('.search-result-meta');
+    expect(meta).toBeNull();
   });
 });
 
