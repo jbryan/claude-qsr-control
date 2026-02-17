@@ -211,6 +211,47 @@ body {
   cursor: pointer;
 }
 
+.globals-table input[type="text"] {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.82rem;
+  width: 10ch;
+  padding: 0.2rem 0.35rem;
+  border-radius: 3px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--lcd-text);
+  outline: none;
+  text-transform: uppercase;
+}
+
+.globals-table input[type="text"]:focus {
+  border-color: var(--accent);
+}
+
+.note-label {
+  margin-left: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--lcd-text);
+  opacity: 0.7;
+}
+
+.sound-enable-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+  font-size: 0.82rem;
+  color: var(--lcd-text);
+  cursor: pointer;
+}
+
+.sound-enable-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
+}
+
 /* --- LCD display --- */
 
 .lcd {

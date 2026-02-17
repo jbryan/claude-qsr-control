@@ -1,7 +1,7 @@
-import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, requestGlobalData, unpackQSData } from './midi.js';
+import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, sendModeSelect, sendBankSelect, sendProgramChange, sendMidiProgramSelect, sendGlobalParam, sendParamEdit, requestGlobalData, unpackQSData } from './midi.js';
 import { logSend } from './midi-log.js';
-import { getKeyboardSampleName, getDrumSampleName } from './samples.js';
-import { getNestedField, Program, Mix, Effect, readProgram, readMix, readEditProgram, readEditMix, writeEditProgram, writeEditMix } from './models.js';
+import { getKeyboardSampleName, getDrumSampleName, KEYBOARD_GROUPS, KEYBOARD_VOICES, DRUM_GROUPS, DRUM_VOICES } from './samples.js';
+import { getNestedField, setNestedField, Program, Mix, Effect, readProgram, readMix, readEditProgram, readEditMix, writeEditProgram, writeEditMix } from './models.js';
 import { putProgram, putMix, getAllNames, hasData, getAllPatchEntries, getProgramByHash, getMixByHash } from './store.js';
 
 const deviceSelect = document.getElementById('device-select');
@@ -538,7 +538,10 @@ function renderSearchResults(query) {
     matches.sort((a, b) => {
       if (a.mode !== b.mode) return a.mode === 'prog' ? -1 : 1;
       if (a.stored !== b.stored) return a.stored ? -1 : 1;
-      if (a.stored && b.stored) return a.patch - b.patch;
+      if (a.stored && b.stored) {
+        if (a.patch !== b.patch) return a.patch - b.patch;
+        return a.bank - b.bank;
+      }
       return a.name.localeCompare(b.name);
     });
   } else {
@@ -859,133 +862,233 @@ function fmtNote(v) {
 }
 
 const KEYBOARD_SOUND_PARAMS = [
-  // Sample
-  { name: 'Sample Group', field: 'sample.group', offset: 0, section: 'Sample' },
-  { name: 'Sample Number', field: 'sample.number', offset: 0, section: 'Sample' },
+  // Sample (combined — handled specially in render)
+  { name: 'Sample', field: 'sample', offset: 0, section: 'Sample',
+    edit: { type: 'sample', groupFunc: 0, groupPage: 0, groupPot: 0, numFunc: 0, numPage: 0, numPot: 2 } },
   // Level
-  { name: 'Volume', field: 'level.volume', offset: 0, section: 'Level' },
-  { name: 'Pan', field: 'level.pan', offset: 0, section: 'Level', format: fmtLookup(PAN_LABELS) },
-  { name: 'Output', field: 'level.output', offset: 0, section: 'Level', format: fmtLookup(OUTPUT_LABELS) },
-  { name: 'Effect Level', field: 'level.effectLevel', offset: 0, section: 'Level' },
-  { name: 'Effect Bus', field: 'level.effectBus', offset: 0, section: 'Level', format: fmtLookup(EFFECT_BUS_LABELS) },
+  { name: 'Volume', field: 'level.volume', offset: 0, section: 'Level',
+    edit: { type: 'number', min: 0, max: 99, func: 1, page: 0, pot: 0 } },
+  { name: 'Pan', field: 'level.pan', offset: 0, section: 'Level', format: fmtLookup(PAN_LABELS),
+    edit: { type: 'select', options: PAN_LABELS, func: 1, page: 0, pot: 1 } },
+  { name: 'Output', field: 'level.output', offset: 0, section: 'Level', format: fmtLookup(OUTPUT_LABELS),
+    edit: { type: 'select', options: OUTPUT_LABELS, func: 1, page: 0, pot: 2 } },
+  { name: 'Effect Level', field: 'level.effectLevel', offset: 0, section: 'Level',
+    edit: { type: 'number', min: 0, max: 99, func: 2, page: 0, pot: 0 } },
+  { name: 'Effect Bus', field: 'level.effectBus', offset: 0, section: 'Level', format: fmtLookup(EFFECT_BUS_LABELS),
+    edit: { type: 'select', options: EFFECT_BUS_LABELS, func: 2, page: 0, pot: 1 } },
   // Pitch
-  { name: 'Semitone', field: 'pitch.semitone', offset: -24, section: 'Pitch', format: fmtSigned(-24) },
-  { name: 'Detune', field: 'pitch.detune', offset: -99, section: 'Pitch', format: fmtSigned(-99) },
-  { name: 'Detune Type', field: 'pitch.detuneType', offset: 0, section: 'Pitch', format: fmtLookup(['Normal', 'Equal Temper']) },
-  { name: 'Pitch Wheel Mod', field: 'pitch.pitchWheelMod', offset: 0, section: 'Pitch' },
-  { name: 'Aftertouch Mod', field: 'pitch.aftertouchMod', offset: -99, section: 'Pitch', format: fmtSigned(-99) },
-  { name: 'LFO Mod', field: 'pitch.lfoMod', offset: -99, section: 'Pitch', format: fmtSigned(-99) },
-  { name: 'Env Mod', field: 'pitch.envMod', offset: -99, section: 'Pitch', format: fmtSigned(-99) },
-  { name: 'Portamento Mode', field: 'pitch.portamentoMode', offset: 0, section: 'Pitch', format: fmtLookup(PORTAMENTO_LABELS) },
-  { name: 'Portamento Rate', field: 'pitch.portamentoRate', offset: 0, section: 'Pitch' },
-  { name: 'Key Mode', field: 'pitch.keyMode', offset: 0, section: 'Pitch', format: fmtLookup(KEY_MODE_LABELS) },
+  { name: 'Semitone', field: 'pitch.semitone', offset: -24, section: 'Pitch', format: fmtSigned(-24),
+    edit: { type: 'number', min: -24, max: 25, func: 3, page: 0, pot: 0 } },
+  { name: 'Detune', field: 'pitch.detune', offset: -99, section: 'Pitch', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 3, page: 0, pot: 2 } },
+  { name: 'Detune Type', field: 'pitch.detuneType', offset: 0, section: 'Pitch', format: fmtLookup(['Normal', 'Equal Temper']),
+    edit: { type: 'select', options: ['Normal', 'Equal Temper'], func: 3, page: 0, pot: 3 } },
+  { name: 'Pitch Wheel Mod', field: 'pitch.pitchWheelMod', offset: 0, section: 'Pitch',
+    edit: { type: 'number', min: 0, max: 12, func: 3, page: 1, pot: 0 } },
+  { name: 'Aftertouch Mod', field: 'pitch.aftertouchMod', offset: -99, section: 'Pitch', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 3, page: 1, pot: 1 } },
+  { name: 'LFO Mod', field: 'pitch.lfoMod', offset: -99, section: 'Pitch', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 3, page: 1, pot: 2 } },
+  { name: 'Env Mod', field: 'pitch.envMod', offset: -99, section: 'Pitch', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 3, page: 1, pot: 3 } },
+  { name: 'Portamento Mode', field: 'pitch.portamentoMode', offset: 0, section: 'Pitch', format: fmtLookup(PORTAMENTO_LABELS),
+    edit: { type: 'select', options: PORTAMENTO_LABELS, func: 3, page: 2, pot: 0 } },
+  { name: 'Portamento Rate', field: 'pitch.portamentoRate', offset: 0, section: 'Pitch',
+    edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 2 } },
+  { name: 'Key Mode', field: 'pitch.keyMode', offset: 0, section: 'Pitch', format: fmtLookup(KEY_MODE_LABELS),
+    edit: { type: 'select', options: KEY_MODE_LABELS, func: 3, page: 2, pot: 3 } },
   // Filter
-  { name: 'Frequency', field: 'filter.frequency', offset: 0, section: 'Filter' },
-  { name: 'Keyboard Track', field: 'filter.keyboardTrack', offset: 0, section: 'Filter', format: fmtBool('On', 'Off') },
-  { name: 'Velocity Mod', field: 'filter.velocityMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
-  { name: 'Pitch Wheel Mod', field: 'filter.pitchWheelMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
-  { name: 'Aftertouch Mod', field: 'filter.aftertouchMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
-  { name: 'LFO Mod', field: 'filter.lfoMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
-  { name: 'Env Mod', field: 'filter.envMod', offset: -99, section: 'Filter', format: fmtSigned(-99) },
+  { name: 'Frequency', field: 'filter.frequency', offset: 0, section: 'Filter',
+    edit: { type: 'number', min: 0, max: 99, func: 4, page: 0, pot: 0 } },
+  { name: 'Keyboard Track', field: 'filter.keyboardTrack', offset: 0, section: 'Filter', format: fmtBool('On', 'Off'),
+    edit: { type: 'checkbox', func: 4, page: 0, pot: 1 } },
+  { name: 'Velocity Mod', field: 'filter.velocityMod', offset: -99, section: 'Filter', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 4, page: 0, pot: 3 } },
+  { name: 'Pitch Wheel Mod', field: 'filter.pitchWheelMod', offset: -99, section: 'Filter', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 4, page: 1, pot: 0 } },
+  { name: 'Aftertouch Mod', field: 'filter.aftertouchMod', offset: -99, section: 'Filter', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 4, page: 1, pot: 1 } },
+  { name: 'LFO Mod', field: 'filter.lfoMod', offset: -99, section: 'Filter', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 4, page: 1, pot: 2 } },
+  { name: 'Env Mod', field: 'filter.envMod', offset: -99, section: 'Filter', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 4, page: 1, pot: 3 } },
   // Amp
-  { name: 'Velocity Curve', field: 'amp.velocityCurve', offset: 0, section: 'Amp', format: fmtLookup(VEL_CURVE_LABELS) },
-  { name: 'Aftertouch Mod', field: 'amp.aftertouchMod', offset: -99, section: 'Amp', format: fmtSigned(-99) },
-  { name: 'LFO Mod', field: 'amp.lfoMod', offset: -99, section: 'Amp', format: fmtSigned(-99) },
+  { name: 'Velocity Curve', field: 'amp.velocityCurve', offset: 0, section: 'Amp', format: fmtLookup(VEL_CURVE_LABELS),
+    edit: { type: 'select', options: VEL_CURVE_LABELS, func: 5, page: 0, pot: 0 } },
+  { name: 'Aftertouch Mod', field: 'amp.aftertouchMod', offset: -99, section: 'Amp', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 5, page: 0, pot: 1 } },
+  { name: 'LFO Mod', field: 'amp.lfoMod', offset: -99, section: 'Amp', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 5, page: 0, pot: 2 } },
   // Note Range
-  { name: 'Low Note', field: 'noteRange.lowNote', offset: 0, section: 'Note Range', format: fmtNote },
-  { name: 'High Note', field: 'noteRange.highNote', offset: 0, section: 'Note Range', format: fmtNote },
-  { name: 'Overlap', field: 'noteRange.overlap', offset: 0, section: 'Note Range' },
+  { name: 'Low Note', field: 'noteRange.lowNote', offset: 0, section: 'Note Range', format: fmtNote,
+    edit: { type: 'note', min: 0, max: 127, func: 6, page: 0, pot: 0 } },
+  { name: 'High Note', field: 'noteRange.highNote', offset: 0, section: 'Note Range', format: fmtNote,
+    edit: { type: 'note', min: 0, max: 127, func: 6, page: 0, pot: 1 } },
+  { name: 'Overlap', field: 'noteRange.overlap', offset: 0, section: 'Note Range',
+    edit: { type: 'number', min: 0, max: 99, func: 6, page: 0, pot: 2 } },
   // Mod Routings 1-6
   ...Array.from({ length: 6 }, (_, m) => [
-    { name: 'Source', field: `mods.${m}.source`, offset: 0, section: `Mod ${m + 1}`, format: fmtLookup(MOD_SOURCES) },
-    { name: 'Destination', field: `mods.${m}.destination`, offset: 0, section: `Mod ${m + 1}`, format: fmtLookup(MOD_DESTS) },
-    { name: 'Amplitude', field: `mods.${m}.amplitude`, offset: -99, section: `Mod ${m + 1}`, format: fmtSigned(-99) },
-    { name: 'Gate', field: `mods.${m}.gate`, offset: 0, section: `Mod ${m + 1}`, format: fmtBool('On', 'Off') },
+    { name: 'Source', field: `mods.${m}.source`, offset: 0, section: `Mod ${m + 1}`, format: fmtLookup(MOD_SOURCES),
+      edit: { type: 'select', options: MOD_SOURCES, func: 7, page: m, pot: 0 } },
+    { name: 'Destination', field: `mods.${m}.destination`, offset: 0, section: `Mod ${m + 1}`, format: fmtLookup(MOD_DESTS),
+      edit: { type: 'select', options: MOD_DESTS, func: 7, page: m, pot: 1 } },
+    { name: 'Amplitude', field: `mods.${m}.amplitude`, offset: -99, section: `Mod ${m + 1}`, format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 100, func: 7, page: m, pot: 2 } },
+    { name: 'Gate', field: `mods.${m}.gate`, offset: 0, section: `Mod ${m + 1}`, format: fmtBool('On', 'Off'),
+      edit: { type: 'checkbox', func: 7, page: m, pot: 3 } },
   ]).flat(),
   // Pitch LFO
-  { name: 'Waveform', field: 'pitchLfo.waveform', offset: 0, section: 'Pitch LFO', format: fmtLookup(LFO_WAVE_LABELS) },
-  { name: 'Speed', field: 'pitchLfo.speed', offset: 0, section: 'Pitch LFO' },
-  { name: 'Delay', field: 'pitchLfo.delay', offset: 0, section: 'Pitch LFO' },
-  { name: 'Trigger', field: 'pitchLfo.trigger', offset: 0, section: 'Pitch LFO', format: fmtLookup(LFO_TRIG_LABELS) },
-  { name: 'Level', field: 'pitchLfo.level', offset: 0, section: 'Pitch LFO' },
-  { name: 'Mod Wheel Mod', field: 'pitchLfo.modWheelMod', offset: -99, section: 'Pitch LFO', format: fmtSigned(-99) },
-  { name: 'Aftertouch Mod', field: 'pitchLfo.aftertouchMod', offset: -99, section: 'Pitch LFO', format: fmtSigned(-99) },
+  { name: 'Waveform', field: 'pitchLfo.waveform', offset: 0, section: 'Pitch LFO', format: fmtLookup(LFO_WAVE_LABELS),
+    edit: { type: 'select', options: LFO_WAVE_LABELS, func: 9, page: 0, pot: 0 } },
+  { name: 'Speed', field: 'pitchLfo.speed', offset: 0, section: 'Pitch LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 9, page: 0, pot: 1 } },
+  { name: 'Delay', field: 'pitchLfo.delay', offset: 0, section: 'Pitch LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 9, page: 0, pot: 2 } },
+  { name: 'Trigger', field: 'pitchLfo.trigger', offset: 0, section: 'Pitch LFO', format: fmtLookup(LFO_TRIG_LABELS),
+    edit: { type: 'select', options: LFO_TRIG_LABELS, func: 9, page: 0, pot: 3 } },
+  { name: 'Level', field: 'pitchLfo.level', offset: 0, section: 'Pitch LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 9, page: 1, pot: 0 } },
+  { name: 'Mod Wheel Mod', field: 'pitchLfo.modWheelMod', offset: -99, section: 'Pitch LFO', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 9, page: 1, pot: 1 } },
+  { name: 'Aftertouch Mod', field: 'pitchLfo.aftertouchMod', offset: -99, section: 'Pitch LFO', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 9, page: 1, pot: 2 } },
   // Filter LFO
-  { name: 'Waveform', field: 'filterLfo.waveform', offset: 0, section: 'Filter LFO', format: fmtLookup(LFO_WAVE_LABELS) },
-  { name: 'Speed', field: 'filterLfo.speed', offset: 0, section: 'Filter LFO' },
-  { name: 'Delay', field: 'filterLfo.delay', offset: 0, section: 'Filter LFO' },
-  { name: 'Trigger', field: 'filterLfo.trigger', offset: 0, section: 'Filter LFO', format: fmtLookup(LFO_TRIG_LABELS) },
-  { name: 'Level', field: 'filterLfo.level', offset: 0, section: 'Filter LFO' },
-  { name: 'Mod Wheel Mod', field: 'filterLfo.modWheelMod', offset: -99, section: 'Filter LFO', format: fmtSigned(-99) },
-  { name: 'Aftertouch Mod', field: 'filterLfo.aftertouchMod', offset: -99, section: 'Filter LFO', format: fmtSigned(-99) },
+  { name: 'Waveform', field: 'filterLfo.waveform', offset: 0, section: 'Filter LFO', format: fmtLookup(LFO_WAVE_LABELS),
+    edit: { type: 'select', options: LFO_WAVE_LABELS, func: 10, page: 0, pot: 0 } },
+  { name: 'Speed', field: 'filterLfo.speed', offset: 0, section: 'Filter LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 10, page: 0, pot: 1 } },
+  { name: 'Delay', field: 'filterLfo.delay', offset: 0, section: 'Filter LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 10, page: 0, pot: 2 } },
+  { name: 'Trigger', field: 'filterLfo.trigger', offset: 0, section: 'Filter LFO', format: fmtLookup(LFO_TRIG_LABELS),
+    edit: { type: 'select', options: LFO_TRIG_LABELS, func: 10, page: 0, pot: 3 } },
+  { name: 'Level', field: 'filterLfo.level', offset: 0, section: 'Filter LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 10, page: 1, pot: 0 } },
+  { name: 'Mod Wheel Mod', field: 'filterLfo.modWheelMod', offset: -99, section: 'Filter LFO', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 10, page: 1, pot: 1 } },
+  { name: 'Aftertouch Mod', field: 'filterLfo.aftertouchMod', offset: -99, section: 'Filter LFO', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 10, page: 1, pot: 2 } },
   // Amp LFO
-  { name: 'Waveform', field: 'ampLfo.waveform', offset: 0, section: 'Amp LFO', format: fmtLookup(LFO_WAVE_LABELS) },
-  { name: 'Speed', field: 'ampLfo.speed', offset: 0, section: 'Amp LFO' },
-  { name: 'Delay', field: 'ampLfo.delay', offset: 0, section: 'Amp LFO' },
-  { name: 'Trigger', field: 'ampLfo.trigger', offset: 0, section: 'Amp LFO', format: fmtLookup(LFO_TRIG_LABELS) },
-  { name: 'Level', field: 'ampLfo.level', offset: 0, section: 'Amp LFO' },
-  { name: 'Mod Wheel Mod', field: 'ampLfo.modWheelMod', offset: -99, section: 'Amp LFO', format: fmtSigned(-99) },
-  { name: 'Aftertouch Mod', field: 'ampLfo.aftertouchMod', offset: -99, section: 'Amp LFO', format: fmtSigned(-99) },
+  { name: 'Waveform', field: 'ampLfo.waveform', offset: 0, section: 'Amp LFO', format: fmtLookup(LFO_WAVE_LABELS),
+    edit: { type: 'select', options: LFO_WAVE_LABELS, func: 11, page: 0, pot: 0 } },
+  { name: 'Speed', field: 'ampLfo.speed', offset: 0, section: 'Amp LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 11, page: 0, pot: 1 } },
+  { name: 'Delay', field: 'ampLfo.delay', offset: 0, section: 'Amp LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 11, page: 0, pot: 2 } },
+  { name: 'Trigger', field: 'ampLfo.trigger', offset: 0, section: 'Amp LFO', format: fmtLookup(LFO_TRIG_LABELS),
+    edit: { type: 'select', options: LFO_TRIG_LABELS, func: 11, page: 0, pot: 3 } },
+  { name: 'Level', field: 'ampLfo.level', offset: 0, section: 'Amp LFO',
+    edit: { type: 'number', min: 0, max: 99, func: 11, page: 1, pot: 0 } },
+  { name: 'Mod Wheel Mod', field: 'ampLfo.modWheelMod', offset: -99, section: 'Amp LFO', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 11, page: 1, pot: 1 } },
+  { name: 'Aftertouch Mod', field: 'ampLfo.aftertouchMod', offset: -99, section: 'Amp LFO', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 11, page: 1, pot: 2 } },
   // Pitch Envelope
-  { name: 'Attack', field: 'pitchEnv.attack', offset: 0, section: 'Pitch Env' },
-  { name: 'Decay', field: 'pitchEnv.decay', offset: 0, section: 'Pitch Env' },
-  { name: 'Sustain', field: 'pitchEnv.sustain', offset: 0, section: 'Pitch Env' },
-  { name: 'Release', field: 'pitchEnv.release', offset: 0, section: 'Pitch Env' },
-  { name: 'Delay', field: 'pitchEnv.delay', offset: 0, section: 'Pitch Env' },
-  { name: 'Sustain Decay', field: 'pitchEnv.sustainDecay', offset: 0, section: 'Pitch Env' },
-  { name: 'Trigger Type', field: 'pitchEnv.triggerType', offset: 0, section: 'Pitch Env', format: fmtLookup(ENV_TRIG_LABELS) },
-  { name: 'Time Track', field: 'pitchEnv.timeTrack', offset: 0, section: 'Pitch Env', format: fmtBool('On', 'Off') },
-  { name: 'Sustain Pedal', field: 'pitchEnv.sustainPedal', offset: 0, section: 'Pitch Env', format: fmtBool('On', 'Off') },
-  { name: 'Level', field: 'pitchEnv.level', offset: 0, section: 'Pitch Env' },
-  { name: 'Velocity Mod', field: 'pitchEnv.velocityMod', offset: -99, section: 'Pitch Env', format: fmtSigned(-99) },
+  { name: 'Attack', field: 'pitchEnv.attack', offset: 0, section: 'Pitch Env',
+    edit: { type: 'number', min: 0, max: 99, func: 12, page: 0, pot: 0 } },
+  { name: 'Decay', field: 'pitchEnv.decay', offset: 0, section: 'Pitch Env',
+    edit: { type: 'number', min: 0, max: 100, func: 12, page: 0, pot: 1 } },
+  { name: 'Sustain', field: 'pitchEnv.sustain', offset: 0, section: 'Pitch Env',
+    edit: { type: 'number', min: 0, max: 99, func: 12, page: 0, pot: 2 } },
+  { name: 'Release', field: 'pitchEnv.release', offset: 0, section: 'Pitch Env',
+    edit: { type: 'number', min: 0, max: 99, func: 12, page: 0, pot: 3 } },
+  { name: 'Delay', field: 'pitchEnv.delay', offset: 0, section: 'Pitch Env',
+    edit: { type: 'number', min: 0, max: 99, func: 12, page: 1, pot: 0 } },
+  { name: 'Sustain Decay', field: 'pitchEnv.sustainDecay', offset: 0, section: 'Pitch Env',
+    edit: { type: 'number', min: 0, max: 99, func: 12, page: 1, pot: 1 } },
+  { name: 'Trigger Type', field: 'pitchEnv.triggerType', offset: 0, section: 'Pitch Env', format: fmtLookup(ENV_TRIG_LABELS),
+    edit: { type: 'select', options: ENV_TRIG_LABELS, func: 12, page: 1, pot: 3 } },
+  { name: 'Time Track', field: 'pitchEnv.timeTrack', offset: 0, section: 'Pitch Env', format: fmtBool('On', 'Off'),
+    edit: { type: 'checkbox', func: 12, page: 2, pot: 0 } },
+  { name: 'Sustain Pedal', field: 'pitchEnv.sustainPedal', offset: 0, section: 'Pitch Env', format: fmtBool('On', 'Off'),
+    edit: { type: 'checkbox', func: 12, page: 2, pot: 1 } },
+  { name: 'Level', field: 'pitchEnv.level', offset: 0, section: 'Pitch Env',
+    edit: { type: 'number', min: 0, max: 99, func: 12, page: 2, pot: 2 } },
+  { name: 'Velocity Mod', field: 'pitchEnv.velocityMod', offset: -99, section: 'Pitch Env', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 12, page: 2, pot: 3 } },
   // Filter Envelope
-  { name: 'Attack', field: 'filterEnv.attack', offset: 0, section: 'Filter Env' },
-  { name: 'Decay', field: 'filterEnv.decay', offset: 0, section: 'Filter Env' },
-  { name: 'Sustain', field: 'filterEnv.sustain', offset: 0, section: 'Filter Env' },
-  { name: 'Release', field: 'filterEnv.release', offset: 0, section: 'Filter Env' },
-  { name: 'Delay', field: 'filterEnv.delay', offset: 0, section: 'Filter Env' },
-  { name: 'Sustain Decay', field: 'filterEnv.sustainDecay', offset: 0, section: 'Filter Env' },
-  { name: 'Trigger Type', field: 'filterEnv.triggerType', offset: 0, section: 'Filter Env', format: fmtLookup(ENV_TRIG_LABELS) },
-  { name: 'Time Track', field: 'filterEnv.timeTrack', offset: 0, section: 'Filter Env', format: fmtBool('On', 'Off') },
-  { name: 'Sustain Pedal', field: 'filterEnv.sustainPedal', offset: 0, section: 'Filter Env', format: fmtBool('On', 'Off') },
-  { name: 'Level', field: 'filterEnv.level', offset: 0, section: 'Filter Env' },
-  { name: 'Velocity Mod', field: 'filterEnv.velocityMod', offset: -99, section: 'Filter Env', format: fmtSigned(-99) },
+  { name: 'Attack', field: 'filterEnv.attack', offset: 0, section: 'Filter Env',
+    edit: { type: 'number', min: 0, max: 99, func: 13, page: 0, pot: 0 } },
+  { name: 'Decay', field: 'filterEnv.decay', offset: 0, section: 'Filter Env',
+    edit: { type: 'number', min: 0, max: 99, func: 13, page: 0, pot: 1 } },
+  { name: 'Sustain', field: 'filterEnv.sustain', offset: 0, section: 'Filter Env',
+    edit: { type: 'number', min: 0, max: 99, func: 13, page: 0, pot: 2 } },
+  { name: 'Release', field: 'filterEnv.release', offset: 0, section: 'Filter Env',
+    edit: { type: 'number', min: 0, max: 99, func: 13, page: 0, pot: 3 } },
+  { name: 'Delay', field: 'filterEnv.delay', offset: 0, section: 'Filter Env',
+    edit: { type: 'number', min: 0, max: 100, func: 13, page: 1, pot: 0 } },
+  { name: 'Sustain Decay', field: 'filterEnv.sustainDecay', offset: 0, section: 'Filter Env',
+    edit: { type: 'number', min: 0, max: 99, func: 13, page: 1, pot: 1 } },
+  { name: 'Trigger Type', field: 'filterEnv.triggerType', offset: 0, section: 'Filter Env', format: fmtLookup(ENV_TRIG_LABELS),
+    edit: { type: 'select', options: ENV_TRIG_LABELS, func: 13, page: 1, pot: 3 } },
+  { name: 'Time Track', field: 'filterEnv.timeTrack', offset: 0, section: 'Filter Env', format: fmtBool('On', 'Off'),
+    edit: { type: 'checkbox', func: 13, page: 2, pot: 0 } },
+  { name: 'Sustain Pedal', field: 'filterEnv.sustainPedal', offset: 0, section: 'Filter Env', format: fmtBool('On', 'Off'),
+    edit: { type: 'checkbox', func: 13, page: 2, pot: 1 } },
+  { name: 'Level', field: 'filterEnv.level', offset: 0, section: 'Filter Env',
+    edit: { type: 'number', min: 0, max: 99, func: 13, page: 2, pot: 2 } },
+  { name: 'Velocity Mod', field: 'filterEnv.velocityMod', offset: -99, section: 'Filter Env', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 100, func: 13, page: 2, pot: 3 } },
   // Amp Envelope
-  { name: 'Attack', field: 'ampEnv.attack', offset: 0, section: 'Amp Env' },
-  { name: 'Decay', field: 'ampEnv.decay', offset: 0, section: 'Amp Env' },
-  { name: 'Sustain', field: 'ampEnv.sustain', offset: 0, section: 'Amp Env' },
-  { name: 'Release', field: 'ampEnv.release', offset: 0, section: 'Amp Env' },
-  { name: 'Delay', field: 'ampEnv.delay', offset: 0, section: 'Amp Env' },
-  { name: 'Sustain Decay', field: 'ampEnv.sustainDecay', offset: 0, section: 'Amp Env' },
-  { name: 'Trigger Type', field: 'ampEnv.triggerType', offset: 0, section: 'Amp Env', format: fmtLookup(ENV_TRIG_LABELS) },
-  { name: 'Time Track', field: 'ampEnv.timeTrack', offset: 0, section: 'Amp Env', format: fmtBool('On', 'Off') },
-  { name: 'Sustain Pedal', field: 'ampEnv.sustainPedal', offset: 0, section: 'Amp Env', format: fmtBool('On', 'Off') },
-  { name: 'Level', field: 'ampEnv.level', offset: 0, section: 'Amp Env' },
+  { name: 'Attack', field: 'ampEnv.attack', offset: 0, section: 'Amp Env',
+    edit: { type: 'number', min: 0, max: 99, func: 14, page: 0, pot: 0 } },
+  { name: 'Decay', field: 'ampEnv.decay', offset: 0, section: 'Amp Env',
+    edit: { type: 'number', min: 0, max: 99, func: 14, page: 0, pot: 1 } },
+  { name: 'Sustain', field: 'ampEnv.sustain', offset: 0, section: 'Amp Env',
+    edit: { type: 'number', min: 0, max: 99, func: 14, page: 0, pot: 2 } },
+  { name: 'Release', field: 'ampEnv.release', offset: 0, section: 'Amp Env',
+    edit: { type: 'number', min: 0, max: 99, func: 14, page: 0, pot: 3 } },
+  { name: 'Delay', field: 'ampEnv.delay', offset: 0, section: 'Amp Env',
+    edit: { type: 'number', min: 0, max: 100, func: 14, page: 1, pot: 0 } },
+  { name: 'Sustain Decay', field: 'ampEnv.sustainDecay', offset: 0, section: 'Amp Env',
+    edit: { type: 'number', min: 0, max: 99, func: 14, page: 1, pot: 1 } },
+  { name: 'Trigger Type', field: 'ampEnv.triggerType', offset: 0, section: 'Amp Env', format: fmtLookup(ENV_TRIG_LABELS),
+    edit: { type: 'select', options: ENV_TRIG_LABELS, func: 14, page: 1, pot: 3 } },
+  { name: 'Time Track', field: 'ampEnv.timeTrack', offset: 0, section: 'Amp Env', format: fmtBool('On', 'Off'),
+    edit: { type: 'checkbox', func: 14, page: 2, pot: 0 } },
+  { name: 'Sustain Pedal', field: 'ampEnv.sustainPedal', offset: 0, section: 'Amp Env', format: fmtBool('On', 'Off'),
+    edit: { type: 'checkbox', func: 14, page: 2, pot: 1 } },
+  { name: 'Level', field: 'ampEnv.level', offset: 0, section: 'Amp Env',
+    edit: { type: 'number', min: 0, max: 99, func: 14, page: 2, pot: 2 } },
   // Tracking Generator
-  { name: 'Input', field: 'tracking.input', offset: 0, section: 'Tracking', format: fmtLookup(MOD_SOURCES.slice(0, 23)) },
+  { name: 'Input', field: 'tracking.input', offset: 0, section: 'Tracking', format: fmtLookup(MOD_SOURCES.slice(0, 23)),
+    edit: { type: 'select', options: MOD_SOURCES.slice(0, 23), func: 15, page: 0, pot: 0 } },
   ...Array.from({ length: 11 }, (_, i) => ({
     name: `Point ${i}`, field: `tracking.points.${i}`, offset: 0, section: 'Tracking',
+    edit: { type: 'number', min: 0, max: 100, func: 15, page: Math.floor((i + 1) / 4), pot: (i + 1) % 4 },
   })),
 ];
 
 const DRUM_PAN_LABELS = ['Left 3', 'Left 2', 'Left 1', 'Center', 'Right 1', 'Right 2', 'Right 3'];
 
 const DRUM_PARAMS = [
-  { name: 'Sample Group', field: 'sampleGroup', offset: 0 },
-  { name: 'Sample Number', field: 'sampleNumber', offset: 0 },
-  { name: 'Volume', field: 'volume', offset: 0 },
-  { name: 'Pan', field: 'pan', offset: 0, format: fmtLookup(DRUM_PAN_LABELS) },
-  { name: 'Output', field: 'output', offset: 0, format: fmtLookup(OUTPUT_LABELS) },
-  { name: 'Effect Level', field: 'effectLevel', offset: 0 },
-  { name: 'Effect Bus', field: 'effectBus', offset: 0, format: fmtLookup(EFFECT_BUS_LABELS) },
-  { name: 'Pitch', field: 'pitch', offset: -48, format: fmtSigned(-48) },
-  { name: 'Pitch Vel Mod', field: 'pitchVelMod', offset: 0 },
-  { name: 'Filter Vel Mod', field: 'filterVelMod', offset: 0 },
-  { name: 'Velocity Curve', field: 'velocityCurve', offset: 0, format: fmtLookup(VEL_CURVE_LABELS) },
-  { name: 'Note Number', field: 'noteNumber', offset: 0, format: fmtNote },
-  { name: 'Amp Env Decay', field: 'ampEnvDecay', offset: 0 },
-  { name: 'Mute Group', field: 'muteGroup', offset: 0 },
-  { name: 'Note Range', field: 'noteRange', offset: 0 },
+  { name: 'Sample', field: 'sample', offset: 0,
+    edit: { type: 'drumSample', groupFunc: 0, groupPage: 0, groupPot: 0, numFunc: 0, numPage: 0, numPot: 2 } },
+  { name: 'Volume', field: 'volume', offset: 0,
+    edit: { type: 'number', min: 0, max: 31, func: 1, page: 0, pot: 0 } },
+  { name: 'Pan', field: 'pan', offset: 0, format: fmtLookup(DRUM_PAN_LABELS),
+    edit: { type: 'select', options: DRUM_PAN_LABELS, func: 1, page: 0, pot: 1 } },
+  { name: 'Output', field: 'output', offset: 0, format: fmtLookup(OUTPUT_LABELS),
+    edit: { type: 'select', options: OUTPUT_LABELS, func: 1, page: 0, pot: 2 } },
+  { name: 'Effect Level', field: 'effectLevel', offset: 0,
+    edit: { type: 'number', min: 0, max: 63, func: 2, page: 0, pot: 0 } },
+  { name: 'Effect Bus', field: 'effectBus', offset: 0, format: fmtLookup(EFFECT_BUS_LABELS),
+    edit: { type: 'select', options: EFFECT_BUS_LABELS, func: 2, page: 0, pot: 1 } },
+  { name: 'Pitch', field: 'pitch', offset: -48, format: fmtSigned(-48),
+    edit: { type: 'number', min: -48, max: 49, func: 3, page: 0, pot: 0 } },
+  { name: 'Pitch Vel Mod', field: 'pitchVelMod', offset: 0,
+    edit: { type: 'number', min: 0, max: 7, func: 3, page: 0, pot: 1 } },
+  { name: 'Filter Vel Mod', field: 'filterVelMod', offset: 0,
+    edit: { type: 'number', min: 0, max: 3, func: 4, page: 0, pot: 0 } },
+  { name: 'Velocity Curve', field: 'velocityCurve', offset: 0, format: fmtLookup(VEL_CURVE_LABELS),
+    edit: { type: 'select', options: VEL_CURVE_LABELS, func: 5, page: 0, pot: 0 } },
+  { name: 'Note Number', field: 'noteNumber', offset: 0, format: fmtNote,
+    edit: { type: 'note', min: 0, max: 127, func: 6, page: 0, pot: 0 } },
+  { name: 'Amp Env Decay', field: 'ampEnvDecay', offset: 0,
+    edit: { type: 'number', min: 0, max: 127, func: 8, page: 0, pot: 0 } },
+  { name: 'Mute Group', field: 'muteGroup', offset: 0,
+    edit: { type: 'number', min: 0, max: 3, func: 8, page: 0, pot: 1 } },
+  { name: 'Note Range', field: 'noteRange', offset: 0,
+    edit: { type: 'number', min: 0, max: 3, func: 6, page: 0, pot: 2 } },
 ];
 
 const ROM_ID_LABELS = ['QS+/S4+', 'QS', 'Reserved', 'Reserved'];
@@ -998,6 +1101,63 @@ const EFFECT_CONFIG_LABELS = [
   '4: Overdrive + Lezlie',
 ];
 
+let currentEditProgram = null;
+
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function noteName(v) {
+  return `${NOTE_NAMES[v % 12]}${Math.floor(v / 12) - 2}`;
+}
+
+function buildSampleOptions(groups, voices) {
+  let html = '<option value="0|0">OFF</option>';
+  for (let g = 0; g < groups.length; g++) {
+    const vList = voices[g];
+    if (!vList || !vList.length) continue;
+    html += `<optgroup label="${escapeHTML(groups[g])}">`;
+    for (let v = 0; v < vList.length; v++) {
+      html += `<option value="${g}|${v + 1}">${escapeHTML(vList[v])}</option>`;
+    }
+    html += '</optgroup>';
+  }
+  return html;
+}
+
+function renderControl(p, raw, dataAttrs) {
+  const e = p.edit;
+  if (!e) {
+    const val = p.format ? p.format(raw) : (p.offset ? String(raw + p.offset) : String(raw));
+    return escapeHTML(String(val));
+  }
+  const attrs = dataAttrs || '';
+  if (e.type === 'number') {
+    const display = raw + (p.offset || 0);
+    return `<input type="number" class="prog-edit" ${attrs} data-field="${p.field}" data-offset="${p.offset || 0}" ` +
+      `data-func="${e.func}" data-page="${e.page}" data-pot="${e.pot}" ` +
+      `min="${e.min}" max="${e.max}" value="${display}">`;
+  }
+  if (e.type === 'note') {
+    return `<input type="number" class="prog-edit" ${attrs} data-field="${p.field}" data-offset="0" ` +
+      `data-func="${e.func}" data-page="${e.page}" data-pot="${e.pot}" ` +
+      `min="${e.min}" max="${e.max}" value="${raw}">` +
+      `<span class="note-label">${noteName(raw)}</span>`;
+  }
+  if (e.type === 'checkbox') {
+    return `<input type="checkbox" class="prog-edit" ${attrs} data-field="${p.field}" data-offset="0" ` +
+      `data-func="${e.func}" data-page="${e.page}" data-pot="${e.pot}" ` +
+      `${raw ? 'checked' : ''}>`;
+  }
+  if (e.type === 'select') {
+    let html = `<select class="prog-edit" ${attrs} data-field="${p.field}" data-offset="0" ` +
+      `data-func="${e.func}" data-page="${e.page}" data-pot="${e.pot}">`;
+    for (let i = 0; i < e.options.length; i++) {
+      html += `<option value="${i}"${i === raw ? ' selected' : ''}>${escapeHTML(e.options[i])}</option>`;
+    }
+    html += '</select>';
+    return html;
+  }
+  return escapeHTML(String(raw));
+}
+
 function renderSectionBlock(label, rowsHtml) {
   return `<div class="prog-info-section-block"><table class="globals-table"><tbody>` +
     `<tr class="prog-info-subsection"><td colspan="2">${escapeHTML(label)}</td></tr>` +
@@ -1005,11 +1165,18 @@ function renderSectionBlock(label, rowsHtml) {
     `</tbody></table></div>`;
 }
 
-function renderKeyboardSound(keyboard) {
-  const sampleName = getKeyboardSampleName(keyboard.sample.group, keyboard.sample.number);
+function renderKeyboardSound(keyboard, soundIndex) {
+  const si = `data-sound="${soundIndex}"`;
+  // Sample dropdown
+  const sampleVal = `${keyboard.sample.group}|${keyboard.sample.number}`;
+  const sampleOpts = buildSampleOptions(KEYBOARD_GROUPS, KEYBOARD_VOICES);
+  let sampleHtml = `<select class="prog-edit" ${si} data-field="sample" data-offset="0" ` +
+    `data-func="0" data-page="0" data-pot="0">${sampleOpts}</select>`;
+  // Set selected via script after render (value includes pipe)
+  const sampleScript = `<script-data data-sample-select="${soundIndex}" data-val="${sampleVal}"></script-data>`;
 
   let html = renderSectionBlock('Sample',
-    `<tr><td>Sample</td><td>${escapeHTML(sampleName)}</td></tr>`);
+    `<tr><td>Sample</td><td>${sampleHtml}${sampleScript}</td></tr>`);
 
   let currentSection = '';
   let rows = '';
@@ -1023,8 +1190,7 @@ function renderKeyboardSound(keyboard) {
       rows = '';
     }
     const raw = getNestedField(keyboard, p.field);
-    const val = p.format ? p.format(raw) : (p.offset ? String(raw + p.offset) : String(raw));
-    rows += `<tr><td>${escapeHTML(p.name)}</td><td>${escapeHTML(String(val))}</td></tr>`;
+    rows += `<tr><td>${escapeHTML(p.name)}</td><td>${renderControl(p, raw, si)}</td></tr>`;
   }
   if (currentSection) {
     html += renderSectionBlock(currentSection, rows);
@@ -1032,19 +1198,28 @@ function renderKeyboardSound(keyboard) {
   return html;
 }
 
-function renderDrumSound(drums) {
+function renderDrumSound(drums, soundIndex) {
   let html = '';
   for (let d = 0; d < drums.length; d++) {
     const drum = drums[d];
     const drumName = getDrumSampleName(drum.sampleGroup, drum.sampleNumber);
+    const da = `data-sound="${soundIndex}" data-drum="${d}"`;
     let rows = '';
+
+    // Drum sample dropdown
+    const sampleVal = `${drum.sampleGroup}|${drum.sampleNumber}`;
+    const sampleOpts = buildSampleOptions(DRUM_GROUPS, DRUM_VOICES);
+    let sampleHtml = `<select class="prog-edit" ${da} data-field="sample" data-offset="0" ` +
+      `data-func="0" data-page="0" data-pot="0">${sampleOpts}</select>`;
+    const sampleScript = `<script-data data-drum-sample-select="${soundIndex}-${d}" data-val="${sampleVal}"></script-data>`;
+    rows += `<tr><td>Sample</td><td>${sampleHtml}${sampleScript}</td></tr>`;
+
     for (const p of DRUM_PARAMS) {
-      if (p.field === 'sampleGroup' || p.field === 'sampleNumber') continue;
+      if (p.edit && p.edit.type === 'drumSample') continue;
       const raw = drum[p.field];
-      const val = p.format ? p.format(raw) : (p.offset ? String(raw + p.offset) : String(raw));
-      rows += `<tr><td>${escapeHTML(p.name)}</td><td>${escapeHTML(String(val))}</td></tr>`;
+      rows += `<tr><td>${escapeHTML(p.name)}</td><td>${renderControl(p, raw, da)}</td></tr>`;
     }
-    html += renderSectionBlock(`Drum ${d + 1} — ${drumName}`, rows);
+    html += renderSectionBlock(`Drum ${d + 1} — ${escapeHTML(drumName)}`, rows);
   }
   return html;
 }
@@ -1098,10 +1273,15 @@ function renderEffect(effect) {
 }
 
 function renderProgInfo(program) {
+  currentEditProgram = program;
+
   // Common section
   let html = '<table class="globals-table"><tbody>';
-  html += `<tr><td>Program Name</td><td>${escapeHTML(program.name)}</td></tr>`;
-  html += `<tr><td>ROM ID</td><td>${ROM_ID_LABELS[program.romId] || program.romId}</td></tr>`;
+  html += `<tr><td>Program Name</td><td><input type="text" class="prog-edit-name" maxlength="10" value="${escapeHTML(program.name)}"></td></tr>`;
+  const romOpts = ROM_ID_LABELS.map((label, i) =>
+    `<option value="${i}"${i === program.romId ? ' selected' : ''}>${escapeHTML(label)}</option>`
+  ).join('');
+  html += `<tr><td>ROM ID</td><td><select class="prog-edit-rom">${romOpts}</select></td></tr>`;
   html += '</tbody></table>';
 
   // Tab bar
@@ -1110,8 +1290,7 @@ function renderProgInfo(program) {
     const snd = program.sounds[s];
     const label = `Sound ${s + 1}`;
     const active = s === 0 ? ' active' : '';
-    const disabled = !snd.enabled ? ' disabled' : '';
-    html += `<button class="prog-info-tab${active}" data-tab="${s}"${disabled}>${label}</button>`;
+    html += `<button class="prog-info-tab${active}" data-tab="${s}">${label}</button>`;
   }
   html += `<button class="prog-info-tab" data-tab="fx">Effects</button>`;
   html += '</div>';
@@ -1121,18 +1300,19 @@ function renderProgInfo(program) {
     const snd = program.sounds[s];
     const active = s === 0 ? ' active' : '';
     html += `<div class="prog-info-panel${active}" data-panel="${s}">`;
-    if (!snd.enabled) {
-      const modeLabel = snd.isDrum ? 'Drum' : 'Keyboard';
-      html += `<p class="globals-loading">${modeLabel} — Disabled</p>`;
+    // Sound enable checkbox
+    const enableFunc = snd.isDrum ? 9 : 16;
+    const modeLabel = snd.isDrum ? 'Drum' : 'Keyboard';
+    html += `<label class="sound-enable-label"><input type="checkbox" class="prog-edit-enable" ` +
+      `data-sound="${s}" data-func="${enableFunc}" ${snd.enabled ? 'checked' : ''}> ` +
+      `${modeLabel} Enabled</label>`;
+    html += `<div class="prog-info-sections sound-content"${!snd.enabled ? ' style="display:none"' : ''}>`;
+    if (snd.isDrum) {
+      html += renderDrumSound(snd.drums, s);
     } else {
-      html += '<div class="prog-info-sections">';
-      if (snd.isDrum) {
-        html += renderDrumSound(snd.drums);
-      } else {
-        html += renderKeyboardSound(snd.keyboard);
-      }
-      html += '</div>';
+      html += renderKeyboardSound(snd.keyboard, s);
     }
+    html += '</div>';
     html += '</div>';
   }
 
@@ -1144,6 +1324,16 @@ function renderProgInfo(program) {
 
   progInfoBody.innerHTML = html;
 
+  // Set sample dropdown selected values (can't set pipe-containing values via HTML attr)
+  progInfoBody.querySelectorAll('script-data[data-sample-select]').forEach(el => {
+    const select = el.previousElementSibling;
+    if (select) select.value = el.dataset.val;
+  });
+  progInfoBody.querySelectorAll('script-data[data-drum-sample-select]').forEach(el => {
+    const select = el.previousElementSibling;
+    if (select) select.value = el.dataset.val;
+  });
+
   // Wire up tab switching
   progInfoBody.querySelectorAll('.prog-info-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -1152,6 +1342,118 @@ function renderProgInfo(program) {
       tab.classList.add('active');
       progInfoBody.querySelector(`.prog-info-panel[data-panel="${tab.dataset.tab}"]`)?.classList.add('active');
     });
+  });
+
+  // Wire up program name editing
+  const nameInput = progInfoBody.querySelector('.prog-edit-name');
+  if (nameInput) {
+    nameInput.addEventListener('change', () => {
+      if (!activeDevice || !currentEditProgram) return;
+      const name = nameInput.value.padEnd(10).slice(0, 10);
+      currentEditProgram.name = name.trim();
+      const out = activeDevice.device.output;
+      // Drum sounds use func 7 for name digits, keyboard sounds use func 8
+      const nameFunc = currentEditProgram.sounds[0].isDrum ? 7 : 8;
+      for (let i = 0; i < 10; i++) {
+        const charVal = name.charCodeAt(i) - 32;
+        sendParamEdit(out, 2, nameFunc, 0, i, 0, 0, charVal);
+      }
+    });
+  }
+
+  // Wire up ROM ID editing
+  const romSelect = progInfoBody.querySelector('.prog-edit-rom');
+  if (romSelect) {
+    romSelect.addEventListener('change', () => {
+      if (!currentEditProgram) return;
+      currentEditProgram.romId = Number(romSelect.value);
+    });
+  }
+
+  // Wire up sound enable checkboxes
+  progInfoBody.querySelectorAll('.prog-edit-enable').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (!activeDevice || !currentEditProgram) return;
+      const s = Number(cb.dataset.sound);
+      const snd = currentEditProgram.sounds[s];
+      snd.enabled = cb.checked;
+      const out = activeDevice.device.output;
+      const func = Number(cb.dataset.func);
+      sendParamEdit(out, 2, func, s, 0, 0, 3, cb.checked ? 1 : 0);
+      // Toggle content visibility
+      const panel = cb.closest('.prog-info-panel');
+      const content = panel?.querySelector('.sound-content');
+      if (content) content.style.display = cb.checked ? '' : 'none';
+    });
+  });
+
+  // Delegated change handler for all param controls
+  progInfoBody.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!el.classList.contains('prog-edit')) return;
+    if (!activeDevice || !currentEditProgram) return;
+
+    const out = activeDevice.device.output;
+    const soundIdx = Number(el.dataset.sound);
+    const snd = currentEditProgram.sounds[soundIdx];
+    const field = el.dataset.field;
+    const offset = Number(el.dataset.offset) || 0;
+    const func = Number(el.dataset.func);
+    const page = Number(el.dataset.page);
+    const pot = Number(el.dataset.pot);
+    const drumIdx = el.dataset.drum !== undefined ? Number(el.dataset.drum) : -1;
+
+    // Determine raw value based on control type
+    let rawVal, displayVal;
+    if (el.type === 'checkbox') {
+      rawVal = el.checked ? 1 : 0;
+    } else if (el.tagName === 'SELECT' && field === 'sample') {
+      // Keyboard or drum sample dropdown
+      const [g, n] = el.value.split('|').map(Number);
+      if (drumIdx >= 0) {
+        snd.drums[drumIdx].sampleGroup = g;
+        snd.drums[drumIdx].sampleNumber = n;
+        // For drums: set drum number first, then send group and number
+        sendParamEdit(out, 2, 0, soundIdx, 0, 0, 3, drumIdx); // drum number select
+        sendParamEdit(out, 2, 0, soundIdx, 0, 0, 0, g); // group
+        sendParamEdit(out, 2, 0, soundIdx, 0, 0, 2, n); // number
+      } else {
+        setNestedField(snd.keyboard, 'sample.group', g);
+        setNestedField(snd.keyboard, 'sample.number', n);
+        sendParamEdit(out, 2, 0, soundIdx, 0, 0, 0, g);
+        sendParamEdit(out, 2, 0, soundIdx, 0, 0, 2, n);
+      }
+      return; // sample is handled completely
+    } else {
+      displayVal = Number(el.value);
+      rawVal = displayVal - offset;
+    }
+
+    // Update model
+    if (drumIdx >= 0) {
+      snd.drums[drumIdx][field] = rawVal;
+    } else if (snd.keyboard) {
+      setNestedField(snd.keyboard, field, rawVal);
+    }
+
+    // For note fields, update the label
+    if (el.dataset.func !== undefined && el.nextElementSibling?.classList.contains('note-label')) {
+      el.nextElementSibling.textContent = noteName(rawVal);
+    }
+
+    // Convert for SysEx: signed values sent as 2's complement
+    let midiVal = rawVal;
+    if (offset < 0) {
+      // This is a signed param — the raw stored value is unsigned (0-based),
+      // so just send the raw value directly
+      midiVal = rawVal;
+    }
+
+    // For drums: send drum number first
+    if (drumIdx >= 0) {
+      sendParamEdit(out, 2, 0, soundIdx, 0, 0, 3, drumIdx);
+    }
+    sendParamEdit(out, 2, func, soundIdx, page, 0, pot, midiVal & 0xFF);
   });
 }
 
@@ -1175,6 +1477,7 @@ async function openProgInfo() {
 
 function closeProgInfo() {
   progInfoModal.classList.add('hidden');
+  currentEditProgram = null;
 }
 
 editBufBtn.addEventListener('click', async () => {

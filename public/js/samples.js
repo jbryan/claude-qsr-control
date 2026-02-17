@@ -3,12 +3,12 @@
 
 // Keyboard sound sample groups (index 0-15, matching 6-bit group field).
 // Group 16 = "User" (PCMCIA card samples, names not available).
-const KEYBOARD_GROUPS = [
+export const KEYBOARD_GROUPS = [
   'Piano', 'Chromatic', 'Organ', 'Guitar', 'Bass', 'String', 'Brass', 'Wdwind',
   'Synth', 'Wave', 'Noise', 'Voice', 'Ethnic', 'Drums', 'Percus', 'SndFX', 'Rhythm',
 ];
 
-const KEYBOARD_VOICES = [
+export const KEYBOARD_VOICES = [
   // 0: Piano
   ['GrndPianoL','GrndPianoR','DarkPno1 L','DarkPno1 R','DarkPno2 L','DarkPno2 R','DarkPno3 L','DarkPno3 R','BritePno1L','BritePno1R','BritePno2L','BritePno2R','BritePno3L','BritePno3R','4::VibesWave','NoHammer R','SoftPianoL','SoftPianoR','VeloPianoL','VeloPianoR','TapPiano L','TapPiano R','E Spinet 1','E Spinet 2','Toy Pno L','Toy Pno R','KeyTrack1','KeyTrack2','Stretch L','Stretch R','PianoWaveL','PianoWaveR','BriteRoads','Dark Roads','Soft Roads','VeloRoads1','VeloRoads2','VeloRoads3','Wurly','VeloWurly1','VeloWurly2','FM Piano','FM Tines','Soft Tines','VelAtkTine','Vel FM Pno','BrtRdsWave','DrkRdsWave','SftRdsWave','Wurly Wave'],
   // 1: Chromatic
@@ -46,11 +46,11 @@ const KEYBOARD_VOICES = [
 ];
 
 // Drum sound sample groups (index 0-7, matching 4-bit group field).
-const DRUM_GROUPS = [
+export const DRUM_GROUPS = [
   'Kick', 'Snare', 'Toms', 'Cymbal', 'Percus', 'Snd FX', 'Wave', 'Rhythm',
 ];
 
-const DRUM_VOICES = [
+export const DRUM_VOICES = [
   // 0: Kick
   ['FloppyKik1','FloppyKik2','FloppyKikV','MasterKik1','MasterKik2','MasterKikV','MetalKick1','MetalKick2','MetalKickV','GrooveKik1','GrooveKik2','GrooveKikV','Sharp Kick','Tek Kick 1','Tek Kick 2','Tek Kick V','AnalogKik1','AnalogKik2','AnalogKik3','AnalogKikV','Rap Kick'],
   // 1: Snare

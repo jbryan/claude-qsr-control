@@ -1326,7 +1326,8 @@ describe('edit buffer button', () => {
     const modal = document.getElementById('prog-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
     const body = document.getElementById('prog-info-body');
-    expect(body.textContent).toContain('EditBuf');
+    const nameInput = body.querySelector('.prog-edit-name');
+    expect(nameInput.value).toContain('EditBuf');
   });
 
   test('clicking edit-buf-btn in mix mode opens mix-info-modal with edit buffer data', async () => {
@@ -1403,7 +1404,8 @@ describe('program info dialog', () => {
     const modal = document.getElementById('prog-info-modal');
     expect(modal.classList.contains('hidden')).toBe(false);
     const body = document.getElementById('prog-info-body');
-    expect(body.textContent).toContain('EditBuf');
+    const nameInput = body.querySelector('.prog-edit-name');
+    expect(nameInput.value).toContain('EditBuf');
   });
 
   test('renders 5 tabs including Effects', async () => {
@@ -1456,18 +1458,19 @@ describe('program info dialog', () => {
     expect(fxPanel.textContent).toContain('4-Sends, 1 Reverb');
   });
 
-  test('disabled sounds show disabled message', async () => {
+  test('disabled sounds show unchecked enable and hidden content', async () => {
     await loadApp();
 
     document.getElementById('edit-buf-btn').click();
     await waitForProgramLoad();
 
     // Sound 2 is disabled in makeMinimalProgram
-    const tabs = document.querySelectorAll('.prog-info-tab');
-    expect(tabs[1].disabled).toBe(true);
-
     const panel2 = document.querySelector('.prog-info-panel[data-panel="1"]');
-    expect(panel2.textContent).toContain('Disabled');
+    const enableCb = panel2.querySelector('.prog-edit-enable');
+    expect(enableCb.checked).toBe(false);
+
+    const content = panel2.querySelector('.sound-content');
+    expect(content.style.display).toBe('none');
   });
 
   test('close button closes prog-info-modal', async () => {
@@ -1557,7 +1560,8 @@ describe('program info dialog', () => {
     await waitForProgramLoad();
 
     const body = document.getElementById('prog-info-body');
-    expect(body.textContent).toContain('DrumProg');
+    const nameInput = body.querySelector('.prog-edit-name');
+    expect(nameInput.value).toContain('DrumProg');
     expect(body.textContent).toContain('Drum 1');
   });
 
@@ -2120,19 +2124,19 @@ describe('search sort order', () => {
   });
 
   test('unassigned patches appear correctly in number sort', async () => {
-    await seedUnassignedProgram('ZOrphanSort');
+    await seedUnassignedProgram('ZOrphnSort');
     await loadApp();
     openSearch();
     setFilterStored('all');
     setSortOrder('number');
 
     const input = document.getElementById('search-input');
-    input.value = 'ZOrphanSort';
+    input.value = 'ZOrphnSort';
     input.dispatchEvent(new Event('input'));
 
     const items = document.querySelectorAll('.search-result-item');
     expect(items.length).toBe(1);
-    expect(items[0].textContent).toContain('ZOrphanSort');
+    expect(items[0].textContent).toContain('ZOrphnSort');
     // Should have no meta (unassigned)
     const meta = items[0].querySelector('.search-result-meta');
     expect(meta).toBeNull();

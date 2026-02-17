@@ -183,7 +183,7 @@ const DRUM_ENTRY_FIELDS = [
   ['noteRange', 61, 2],
 ];
 
-function setNestedField(obj, path, value) {
+export function setNestedField(obj, path, value) {
   const parts = path.split('.');
   let target = obj;
   for (let i = 0; i < parts.length - 1; i++) {
