@@ -1,6 +1,6 @@
 {
   "name": "qsrcontrol",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "QSR Control PWA - MIDI controller for Alesis QS series synthesizers",
   "type": "module",
   "scripts": {

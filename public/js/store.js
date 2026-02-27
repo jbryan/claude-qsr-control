@@ -1,7 +1,7 @@
 import { Program, Mix, Effect, extractProgName, extractMixName } from './models.js';
 
 const DB_NAME = 'qsr-user-banks';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 export function openDB() {
   return new Promise((resolve, reject) => {
@@ -34,6 +34,21 @@ export async function putProgram(bank, programNum, program) {
       name: program.name,
       hash: program.hash,
     });
+    tx.objectStore('program-data').put({
+      hash: program.hash,
+      programUnpacked: program.toUnpacked(),
+      effectUnpacked: program.effect ? program.effect.toUnpacked() : null,
+    });
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+export async function putUnstoredProgram(program) {
+  if (!program.hash) await program.computeHash();
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['program-data'], 'readwrite');
     tx.objectStore('program-data').put({
       hash: program.hash,
       programUnpacked: program.toUnpacked(),
@@ -81,6 +96,20 @@ export async function putMix(bank, mixNum, mix) {
       name: mix.name,
       hash: mix.hash,
     });
+    tx.objectStore('mix-data').put({
+      hash: mix.hash,
+      mixUnpacked: mix.toUnpacked(),
+    });
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+export async function putUnstoredMix(mix) {
+  if (!mix.hash) await mix.computeHash();
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['mix-data'], 'readwrite');
     tx.objectStore('mix-data').put({
       hash: mix.hash,
       mixUnpacked: mix.toUnpacked(),

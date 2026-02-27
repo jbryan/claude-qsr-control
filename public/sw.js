@@ -1,4 +1,4 @@
-const CACHE_NAME = 'qsr-control-v4';
+const CACHE_NAME = 'qsr-control-v5';
 const ASSETS = [
   '/',
   '/index.html',

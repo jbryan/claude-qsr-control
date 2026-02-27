@@ -2,7 +2,7 @@ import { requestMIDIAccess, getDevices, queryDeviceIdentity, scanForQSDevice, se
 import { logSend } from './midi-log.js';
 import { getKeyboardSampleName, getDrumSampleName, KEYBOARD_GROUPS, KEYBOARD_VOICES, DRUM_GROUPS, DRUM_VOICES } from './samples.js';
 import { getNestedField, setNestedField, Program, Mix, Effect, readProgram, readMix, readEditProgram, readEditMix, writeEditProgram, writeEditMix } from './models.js';
-import { putProgram, putMix, getAllNames, hasData, getAllPatchEntries, getProgramByHash, getMixByHash } from './store.js';
+import { putProgram, putMix, putUnstoredProgram, putUnstoredMix, getAllNames, hasData, getAllPatchEntries, getProgramByHash, getMixByHash } from './store.js';
 
 const deviceSelect = document.getElementById('device-select');
 const identifyBtn = document.getElementById('identify-btn');
@@ -2434,6 +2434,12 @@ function renderSyxViewer(parsed, filename) {
           await writeEditProgram(out, p.program);
           currentPatchName = p.name;
           lcdName.textContent = currentPatchName;
+          try {
+            await putUnstoredProgram(p.program);
+            await loadUserBankCache();
+          } catch (err) {
+            console.error('Failed to save program to IndexedDB:', err);
+          }
         } else {
           const m = mixes[idx];
           if (currentMode !== 'mix') {
@@ -2445,6 +2451,12 @@ function renderSyxViewer(parsed, filename) {
           await writeEditMix(out, m.mix);
           currentPatchName = m.name;
           lcdName.textContent = currentPatchName;
+          try {
+            await putUnstoredMix(m.mix);
+            await loadUserBankCache();
+          } catch (err) {
+            console.error('Failed to save mix to IndexedDB:', err);
+          }
         }
         btn.textContent = 'Loaded';
       } catch {
