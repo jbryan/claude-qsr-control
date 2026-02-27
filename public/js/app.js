@@ -847,6 +847,496 @@ const MOD_DESTS = [
   'Portamento Rate', 'Sample Start', 'Sample Loop'
 ];
 
+// --- Effect enum labels ---
+const PITCH_TYPE_LABELS_6 = ['Chorus 1', 'Chorus 2', 'Flange 1', 'Flange 2', 'Pitch Detune', 'Resonator'];
+const PITCH_TYPE_LABELS_3 = ['Chorus', 'Flange', 'Resonator'];
+const PITCH_TYPE_LABELS_2 = ['Chorus', 'Flange'];
+const DELAY_TYPE_LABELS = ['Mono', 'Stereo', 'Ping-Pong'];
+const REVERB_TYPE_LABELS = ['Room 1', 'Room 2', 'Plate 1', 'Plate 2', 'Hall 1', 'Hall 2', 'Garage'];
+const SHAPE_LABELS = ['Triangle', 'Square'];
+const LEZLIE_SPEED_LABELS = ['Slow', 'Fast'];
+const LEZLIE_MOTOR_LABELS = ['Stop', 'Run'];
+const OVERDRIVE_TYPE_LABELS = ['Light', 'Heavy'];
+const REVERB_INPUT1_LABELS = ['Pre-FX', 'Post-FX'];
+const REVERB_INPUT2_LABELS = ['Pitch', 'Delay', 'Both'];
+
+const FX_MOD_SOURCES = [
+  'Pitch Wheel', 'Mod Wheel', 'Pressure', 'Pedal 1', 'Pedal 2',
+  'Controller A', 'Controller B', 'Controller C', 'Controller D',
+  'MIDI Volume', 'Note #'
+];
+const FX_MOD_DESTS = [
+  'S1 Pitch Speed', 'S1 Pitch Depth', 'S1 Pitch Fdbk', 'S1 Pitch Mix',
+  'S2 Pitch Speed', 'S2 Pitch Depth', 'S2 Pitch Fdbk', 'S2 Pitch Mix',
+  'S3 Pitch Speed', 'S3 Pitch Depth', 'S3 Pitch Fdbk', 'S3 Pitch Mix',
+  'S1 Delay Input', 'S1 Delay Fdbk', 'S1 Delay Mix',
+  'S2 Delay Input', 'S2 Delay Fdbk', 'S2 Delay Mix',
+  'S3 Delay Input', 'S3 Delay Fdbk', 'S3 Delay Mix',
+  'S4 Delay Fdbk', 'S4 Delay Mix',
+  'S1 Reverb Input Lvl', 'S1 Reverb Decay', 'S1 Reverb Mix',
+  'S2 Reverb Input Lvl',
+  'S3 Reverb Input Lvl',
+  'S4 Reverb Input Lvl',
+  'S1 Pitch Input Lvl', 'S1 Delay Input Lvl',
+  'S1 Lezlie Horn', 'S1 Lezlie Mix',
+  'S1 Overdrive Thresh', 'S1 Overdrive Mix',
+  'EQ Lo Gain', 'EQ Hi Gain'
+];
+const FX_MOD_DESTS_CFG4 = FX_MOD_DESTS.slice(0, 23);
+
+const EQ_LO_FREQ_LABELS = ['50 Hz', '80 Hz', '125 Hz', '200 Hz', '315 Hz', '500 Hz'];
+const EQ_HI_FREQ_LABELS = ['2 kHz', '2.5 kHz', '3.15 kHz', '4 kHz', '5 kHz', '6.3 kHz', '8 kHz', '10 kHz'];
+
+// --- Effect parameter tables per configuration ---
+// Each entry: { name, field, offset, section, format?, edit: { type, min?, max?, options?, func, page, pot, send } }
+// send='x' means send is ignored (modulation, EQ, configuration)
+
+const FX_MOD_PARAMS = [
+  { name: 'Source 1', field: 'mod.source1', offset: 0, section: 'Modulation', format: fmtLookup(FX_MOD_SOURCES),
+    edit: { type: 'select', options: FX_MOD_SOURCES, func: 1, page: 0, pot: 0, send: 'x' } },
+  { name: 'Destination 1', field: 'mod.destination1', offset: 0, section: 'Modulation', format: fmtLookup(FX_MOD_DESTS),
+    edit: { type: 'select', options: FX_MOD_DESTS, func: 1, page: 0, pot: 1, send: 'x' } },
+  { name: 'Level 1', field: 'mod.level1', offset: -99, section: 'Modulation', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 99, func: 1, page: 0, pot: 2, send: 'x' } },
+  { name: 'Source 2', field: 'mod.source2', offset: 0, section: 'Modulation', format: fmtLookup(FX_MOD_SOURCES),
+    edit: { type: 'select', options: FX_MOD_SOURCES, func: 1, page: 1, pot: 0, send: 'x' } },
+  { name: 'Destination 2', field: 'mod.destination2', offset: 0, section: 'Modulation', format: fmtLookup(FX_MOD_DESTS),
+    edit: { type: 'select', options: FX_MOD_DESTS, func: 1, page: 1, pot: 1, send: 'x' } },
+  { name: 'Level 2', field: 'mod.level2', offset: -99, section: 'Modulation', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 99, func: 1, page: 1, pot: 2, send: 'x' } },
+];
+
+const FX_MOD_PARAMS_CFG4 = [
+  { name: 'Source 1', field: 'mod.source1', offset: 0, section: 'Modulation', format: fmtLookup(FX_MOD_SOURCES),
+    edit: { type: 'select', options: FX_MOD_SOURCES, func: 1, page: 0, pot: 0, send: 'x' } },
+  { name: 'Destination 1', field: 'mod.destination1', offset: 0, section: 'Modulation', format: fmtLookup(FX_MOD_DESTS_CFG4),
+    edit: { type: 'select', options: FX_MOD_DESTS_CFG4, func: 1, page: 0, pot: 1, send: 'x' } },
+  { name: 'Level 1', field: 'mod.level1', offset: -99, section: 'Modulation', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 99, func: 1, page: 0, pot: 2, send: 'x' } },
+  { name: 'Source 2', field: 'mod.source2', offset: 0, section: 'Modulation', format: fmtLookup(FX_MOD_SOURCES),
+    edit: { type: 'select', options: FX_MOD_SOURCES, func: 1, page: 1, pot: 0, send: 'x' } },
+  { name: 'Destination 2', field: 'mod.destination2', offset: 0, section: 'Modulation', format: fmtLookup(FX_MOD_DESTS_CFG4),
+    edit: { type: 'select', options: FX_MOD_DESTS_CFG4, func: 1, page: 1, pot: 1, send: 'x' } },
+  { name: 'Level 2', field: 'mod.level2', offset: -99, section: 'Modulation', format: fmtSigned(-99),
+    edit: { type: 'number', min: -99, max: 99, func: 1, page: 1, pot: 2, send: 'x' } },
+];
+
+// Pitch block for configs 0/3 sends 1-2 (6 pitch types)
+function fxPitchParams6(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Pitch Type', field: `${sendField}.pitch.type`, offset: 0, section: `Send ${s+1} Pitch`, format: fmtLookup(PITCH_TYPE_LABELS_6),
+      edit: { type: 'select', options: PITCH_TYPE_LABELS_6, func: 0, page: 0, pot: 0, send: s } },
+    { name: 'Speed', field: `${sendField}.pitch.speed`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 1, pot: 1, send: s } },
+    { name: 'Shape', field: `${sendField}.pitch.shape`, offset: 0, section: `Send ${s+1} Pitch`, format: fmtLookup(SHAPE_LABELS),
+      edit: { type: 'select', options: SHAPE_LABELS, func: 0, page: 1, pot: 0, send: s } },
+    { name: 'Depth', field: `${sendField}.pitch.depth`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 1, pot: 2, send: s } },
+    { name: 'Feedback', field: `${sendField}.pitch.feedback`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 1, pot: 3, send: s } },
+    { name: 'Mix', field: `${sendField}.pitch.mix`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 0, send: s } },
+  ];
+}
+
+// Pitch block for config 0 sends 3 and config 4 (3 pitch types: chorus, flange, resonator)
+function fxPitchParams3(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Pitch Type', field: `${sendField}.pitch.type`, offset: 0, section: `Send ${s+1} Pitch`, format: fmtLookup(PITCH_TYPE_LABELS_3),
+      edit: { type: 'select', options: PITCH_TYPE_LABELS_3, func: 0, page: 0, pot: 0, send: s } },
+    { name: 'Speed', field: `${sendField}.pitch.speed`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 1, pot: 1, send: s } },
+    { name: 'Shape', field: `${sendField}.pitch.shape`, offset: 0, section: `Send ${s+1} Pitch`, format: fmtLookup(SHAPE_LABELS),
+      edit: { type: 'select', options: SHAPE_LABELS, func: 0, page: 1, pot: 0, send: s } },
+    { name: 'Depth', field: `${sendField}.pitch.depth`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 1, pot: 2, send: s } },
+    { name: 'Feedback', field: `${sendField}.pitch.feedback`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 1, pot: 3, send: s } },
+    { name: 'Mix', field: `${sendField}.pitch.mix`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 0, send: s } },
+  ];
+}
+
+// Full delay block (configs 0/3 sends 1-2; config 4 send 1)
+function fxFullDelayParams(sendNum, sendField, hasMix) {
+  const s = sendNum;
+  const params = [
+    { name: 'Delay Type', field: `${sendField}.delay.type`, offset: 0, section: `Send ${s+1} Delay`, format: fmtLookup(DELAY_TYPE_LABELS),
+      edit: { type: 'select', options: DELAY_TYPE_LABELS, func: 4, page: 0, pot: 0, send: s } },
+    { name: 'Input', field: `${sendField}.delay.input`, offset: -99, section: `Send ${s+1} Delay`, format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 4, page: 1, pot: 0, send: s } },
+    { name: 'Time 10ms', field: `${sendField}.delay.time10ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 79, func: 4, page: 1, pot: 1, send: s } },
+    { name: 'Time 1ms', field: `${sendField}.delay.time1ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 9, func: 4, page: 1, pot: 2, send: s } },
+    { name: 'Feedback', field: `${sendField}.delay.feedback`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 4, page: 1, pot: 3, send: s } },
+  ];
+  if (hasMix !== false) {
+    params.push({ name: 'Mix', field: `${sendField}.delay.mix`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 1, send: s } });
+  }
+  return params;
+}
+
+// Simple delay (config 0 send 3: mono only, no type)
+function fxSimpleDelayParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Input', field: `${sendField}.delay.input`, offset: -99, section: `Send ${s+1} Delay`, format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 4, page: 0, pot: 0, send: s } },
+    { name: 'Time 10ms', field: `${sendField}.delay.time10ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 79, func: 4, page: 0, pot: 1, send: s } },
+    { name: 'Time 1ms', field: `${sendField}.delay.time1ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 9, func: 4, page: 0, pot: 2, send: s } },
+    { name: 'Feedback', field: `${sendField}.delay.feedback`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 4, page: 0, pot: 3, send: s } },
+    { name: 'Mix', field: `${sendField}.delay.mix`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 1, send: s } },
+  ];
+}
+
+// Minimal delay (config 0 send 4: no type, no input)
+function fxMinimalDelayParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Time 10ms', field: `${sendField}.delay.time10ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 79, func: 4, page: 0, pot: 1, send: s } },
+    { name: 'Time 1ms', field: `${sendField}.delay.time1ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 9, func: 4, page: 0, pot: 2, send: s } },
+    { name: 'Feedback', field: `${sendField}.delay.feedback`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 4, page: 0, pot: 3, send: s } },
+    { name: 'Mix', field: `${sendField}.delay.mix`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 0, send: s } },
+  ];
+}
+
+// Full reverb block (config 0 send 1, config 1 sends 1/3, config 3 send 1, config 4 send 1)
+function fxFullReverbParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Reverb Type', field: `${sendField}.reverb.type`, offset: 0, section: `Send ${s+1} Reverb`, format: fmtLookup(REVERB_TYPE_LABELS),
+      edit: { type: 'select', options: REVERB_TYPE_LABELS, func: 3, page: 1, pot: 0, send: s } },
+    { name: 'Input 1', field: `${sendField}.reverb.input1`, offset: 0, section: `Send ${s+1} Reverb`, format: fmtLookup(REVERB_INPUT1_LABELS),
+      edit: { type: 'select', options: REVERB_INPUT1_LABELS, func: 3, page: 0, pot: 0, send: s } },
+    { name: 'Input 2', field: `${sendField}.reverb.input2`, offset: 0, section: `Send ${s+1} Reverb`, format: fmtLookup(REVERB_INPUT2_LABELS),
+      edit: { type: 'select', options: REVERB_INPUT2_LABELS, func: 3, page: 0, pot: 1, send: s } },
+    { name: 'Balance', field: `${sendField}.reverb.balance`, offset: -99, section: `Send ${s+1} Reverb`, format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 3, page: 0, pot: 2, send: s } },
+    { name: 'Input Level', field: `${sendField}.reverb.inputLevel`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 0, pot: 3, send: s } },
+    { name: 'Predelay 10ms', field: `${sendField}.reverb.predelay10ms`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 29, func: 3, page: 1, pot: 1, send: s } },
+    { name: 'Predelay 1ms', field: `${sendField}.reverb.predelay1ms`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 9, func: 3, page: 1, pot: 2, send: s } },
+    { name: 'Input Premix', field: `${sendField}.reverb.inputPremix`, offset: -99, section: `Send ${s+1} Reverb`, format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 3, page: 1, pot: 3, send: s } },
+    { name: 'Input Filter', field: `${sendField}.reverb.inputFilter`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 0, send: s } },
+    { name: 'Decay', field: `${sendField}.reverb.decay`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 1, send: s } },
+    { name: 'Diffusion', field: `${sendField}.reverb.diffusion`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 3, pot: 2, send: s } },
+    { name: 'Density', field: `${sendField}.reverb.density`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 3, pot: 0, send: s } },
+    { name: 'Low Decay', field: `${sendField}.reverb.lowDecay`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 2, send: s } },
+    { name: 'High Decay', field: `${sendField}.reverb.highDecay`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 3, send: s } },
+    { name: 'Mix', field: `${sendField}.reverb.mix`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 2, send: s } },
+  ];
+}
+
+// Partial reverb (config 0 sends 2-3)
+function fxPartialReverbParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Input 1', field: `${sendField}.reverb.input1`, offset: 0, section: `Send ${s+1} Reverb`, format: fmtLookup(REVERB_INPUT1_LABELS),
+      edit: { type: 'select', options: REVERB_INPUT1_LABELS, func: 3, page: 0, pot: 0, send: s } },
+    { name: 'Input 2', field: `${sendField}.reverb.input2`, offset: 0, section: `Send ${s+1} Reverb`, format: fmtLookup(REVERB_INPUT2_LABELS),
+      edit: { type: 'select', options: REVERB_INPUT2_LABELS, func: 3, page: 0, pot: 1, send: s } },
+    { name: 'Balance', field: `${sendField}.reverb.balance`, offset: -99, section: `Send ${s+1} Reverb`, format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 3, page: 0, pot: 2, send: s } },
+    { name: 'Input Level', field: `${sendField}.reverb.inputLevel`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 0, pot: 3, send: s } },
+  ];
+}
+
+// Minimal reverb (config 0 send 4: balance + level only)
+function fxMinimalReverbParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Balance', field: `${sendField}.reverb.balance`, offset: -99, section: `Send ${s+1} Reverb`, format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 3, page: 0, pot: 0, send: s } },
+    { name: 'Input Level', field: `${sendField}.reverb.inputLevel`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 0, pot: 2, send: s } },
+  ];
+}
+
+// Reverb input level only (config 1 sends 2, 4)
+function fxReverbLevelOnly(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Input Level', field: `${sendField}.reverb.inputLevel`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 0, pot: 0, send: s } },
+  ];
+}
+
+// Lezlie params (config 2 send 1)
+function fxLezlieParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Speed', field: `${sendField}.lezlie.speed`, offset: 0, section: `Send ${s+1} Lezlie`, format: fmtLookup(LEZLIE_SPEED_LABELS),
+      edit: { type: 'select', options: LEZLIE_SPEED_LABELS, func: 0, page: 0, pot: 1, send: s } },
+    { name: 'Motor', field: `${sendField}.lezlie.motor`, offset: 0, section: `Send ${s+1} Lezlie`, format: fmtLookup(LEZLIE_MOTOR_LABELS),
+      edit: { type: 'select', options: LEZLIE_MOTOR_LABELS, func: 0, page: 0, pot: 0, send: s } },
+    { name: 'Horn', field: `${sendField}.lezlie.horn`, offset: 0, section: `Send ${s+1} Lezlie`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 0, pot: 2, send: s } },
+    { name: 'Mix', field: `${sendField}.lezlie.mix`, offset: 0, section: `Send ${s+1} Lezlie`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 0, send: s } },
+  ];
+}
+
+// Config 2 delay (no type, unsigned input)
+function fxConfig2DelayParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Input', field: `${sendField}.delay.input`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 4, page: 0, pot: 0, send: s } },
+    { name: 'Time 10ms', field: `${sendField}.delay.time10ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 79, func: 4, page: 0, pot: 1, send: s } },
+    { name: 'Time 1ms', field: `${sendField}.delay.time1ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 9, func: 4, page: 0, pot: 2, send: s } },
+    { name: 'Feedback', field: `${sendField}.delay.feedback`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 4, page: 0, pot: 3, send: s } },
+    { name: 'Mix', field: `${sendField}.delay.mix`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 1, send: s } },
+  ];
+}
+
+// EQ params (configs 3, 4)
+const FX_EQ_PARAMS = [
+  { name: 'Low Frequency', field: 'eq.loFreq', offset: 0, section: 'Equalizer', format: fmtLookup(EQ_LO_FREQ_LABELS),
+    edit: { type: 'select', options: EQ_LO_FREQ_LABELS, func: 6, page: 0, pot: 0, send: 'x' } },
+  { name: 'Low Gain', field: 'eq.loGain', offset: 0, section: 'Equalizer',
+    edit: { type: 'number', min: 0, max: 12, func: 6, page: 0, pot: 1, send: 'x' } },
+  { name: 'High Frequency', field: 'eq.hiFreq', offset: 0, section: 'Equalizer', format: fmtLookup(EQ_HI_FREQ_LABELS),
+    edit: { type: 'select', options: EQ_HI_FREQ_LABELS, func: 6, page: 0, pot: 2, send: 'x' } },
+  { name: 'High Gain', field: 'eq.hiGain', offset: 0, section: 'Equalizer',
+    edit: { type: 'number', min: 0, max: 9, func: 6, page: 0, pot: 3, send: 'x' } },
+];
+
+// Config 1 pitch (only chorus/flange, 1-bit type)
+function fxConfig1PitchParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Input Level', field: `${sendField}.pitch.inputLevel`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 0, pot: 2, send: s } },
+    { name: 'Pitch Type', field: `${sendField}.pitch.type`, offset: 0, section: `Send ${s+1} Pitch`, format: fmtLookup(PITCH_TYPE_LABELS_2),
+      edit: { type: 'select', options: PITCH_TYPE_LABELS_2, func: 0, page: 0, pot: 0, send: s } },
+    { name: 'Speed', field: `${sendField}.pitch.speed`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 1, pot: 1, send: s } },
+    { name: 'Shape', field: `${sendField}.pitch.shape`, offset: 0, section: `Send ${s+1} Pitch`, format: fmtLookup(SHAPE_LABELS),
+      edit: { type: 'select', options: SHAPE_LABELS, func: 0, page: 1, pot: 0, send: s } },
+    { name: 'Depth', field: `${sendField}.pitch.depth`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 1, pot: 2, send: s } },
+    { name: 'Mix', field: `${sendField}.pitch.mix`, offset: 0, section: `Send ${s+1} Pitch`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 1, send: s } },
+  ];
+}
+
+// Config 1 simple delay (no type, no input)
+function fxConfig1DelayParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Time 10ms', field: `${sendField}.delay.time10ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 119, func: 4, page: 0, pot: 1, send: s } },
+    { name: 'Time 1ms', field: `${sendField}.delay.time1ms`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 9, func: 4, page: 0, pot: 2, send: s } },
+    { name: 'Feedback', field: `${sendField}.delay.feedback`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 4, page: 0, pot: 3, send: s } },
+    { name: 'Mix', field: `${sendField}.delay.mix`, offset: 0, section: `Send ${s+1} Delay`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 0, send: s } },
+  ];
+}
+
+// Config 1 send 3 pitch (speed/shape/depth only)
+function fxConfig1PitchSend3() {
+  return [
+    { name: 'Speed', field: 'send3.pitch.speed', offset: 0, section: 'Send 3 Pitch',
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 0, pot: 1, send: 2 } },
+    { name: 'Shape', field: 'send3.pitch.shape', offset: 0, section: 'Send 3 Pitch', format: fmtLookup(SHAPE_LABELS),
+      edit: { type: 'select', options: SHAPE_LABELS, func: 0, page: 0, pot: 0, send: 2 } },
+    { name: 'Depth', field: 'send3.pitch.depth', offset: 0, section: 'Send 3 Pitch',
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 0, pot: 2, send: 2 } },
+  ];
+}
+
+// Config 4 lezlie (with input routing)
+function fxConfig4LezlieParams() {
+  return [
+    { name: 'Input 1', field: 'send1.lezlie.input1', offset: 0, section: 'Send 1 Lezlie', format: fmtLookup(REVERB_INPUT1_LABELS),
+      edit: { type: 'select', options: REVERB_INPUT1_LABELS, func: 0, page: 2, pot: 0, send: 0 } },
+    { name: 'Input 2', field: 'send1.lezlie.input2', offset: 0, section: 'Send 1 Lezlie',
+      edit: { type: 'number', min: 0, max: 8, func: 0, page: 2, pot: 1, send: 0 } },
+    { name: 'Input Balance', field: 'send1.lezlie.inputBalance', offset: -99, section: 'Send 1 Lezlie', format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 0, page: 2, pot: 2, send: 0 } },
+    { name: 'Speed', field: 'send1.lezlie.speed', offset: 0, section: 'Send 1 Lezlie', format: fmtLookup(LEZLIE_SPEED_LABELS),
+      edit: { type: 'select', options: LEZLIE_SPEED_LABELS, func: 0, page: 3, pot: 1, send: 0 } },
+    { name: 'Motor', field: 'send1.lezlie.motor', offset: 0, section: 'Send 1 Lezlie', format: fmtLookup(LEZLIE_MOTOR_LABELS),
+      edit: { type: 'select', options: LEZLIE_MOTOR_LABELS, func: 0, page: 3, pot: 0, send: 0 } },
+    { name: 'Horn', field: 'send1.lezlie.horn', offset: 0, section: 'Send 1 Lezlie',
+      edit: { type: 'number', min: 0, max: 99, func: 0, page: 3, pot: 2, send: 0 } },
+    { name: 'Mix', field: 'send1.lezlie.mix', offset: 0, section: 'Send 1 Lezlie',
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 1, pot: 3, send: 0 } },
+  ];
+}
+
+// Config 4 overdrive
+function fxConfig4OverdriveParams() {
+  return [
+    { name: 'Type', field: 'send1.overdrive.type', offset: 0, section: 'Send 1 Overdrive', format: fmtLookup(OVERDRIVE_TYPE_LABELS),
+      edit: { type: 'select', options: OVERDRIVE_TYPE_LABELS, func: 6, page: 0, pot: 0, send: 0 } },
+    { name: 'Balance', field: 'send1.overdrive.balance', offset: -99, section: 'Send 1 Overdrive', format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 6, page: 1, pot: 2, send: 0 } },
+    { name: 'Threshold', field: 'send1.overdrive.threshold', offset: 0, section: 'Send 1 Overdrive',
+      edit: { type: 'number', min: 0, max: 99, func: 6, page: 0, pot: 2, send: 0 } },
+    { name: 'Brightness', field: 'send1.overdrive.brightness', offset: 0, section: 'Send 1 Overdrive',
+      edit: { type: 'number', min: 0, max: 99, func: 6, page: 1, pot: 0, send: 0 } },
+  ];
+}
+
+// Config 4 delay (with input routing)
+function fxConfig4DelayParams() {
+  return [
+    { name: 'Delay Type', field: 'send1.delay.type', offset: 0, section: 'Send 1 Delay', format: fmtLookup(DELAY_TYPE_LABELS),
+      edit: { type: 'select', options: DELAY_TYPE_LABELS, func: 4, page: 0, pot: 0, send: 0 } },
+    { name: 'Input Balance', field: 'send1.delay.inputBalance', offset: -99, section: 'Send 1 Delay', format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 4, page: 0, pot: 2, send: 0 } },
+    { name: 'Time 10ms', field: 'send1.delay.time10ms', offset: 0, section: 'Send 1 Delay',
+      edit: { type: 'number', min: 0, max: 79, func: 4, page: 1, pot: 1, send: 0 } },
+    { name: 'Time 1ms', field: 'send1.delay.time1ms', offset: 0, section: 'Send 1 Delay',
+      edit: { type: 'number', min: 0, max: 9, func: 4, page: 1, pot: 2, send: 0 } },
+    { name: 'Feedback', field: 'send1.delay.feedback', offset: 0, section: 'Send 1 Delay',
+      edit: { type: 'number', min: 0, max: 99, func: 4, page: 1, pot: 3, send: 0 } },
+    { name: 'Mix', field: 'send1.delay.mix', offset: 0, section: 'Send 1 Delay',
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 3, send: 0 } },
+  ];
+}
+
+// Full reverb for config 1 (no input routing fields)
+function fxConfig1FullReverbParams(sendNum, sendField) {
+  const s = sendNum;
+  return [
+    { name: 'Reverb Type', field: `${sendField}.reverb.type`, offset: 0, section: `Send ${s+1} Reverb`, format: fmtLookup(REVERB_TYPE_LABELS),
+      edit: { type: 'select', options: REVERB_TYPE_LABELS, func: 3, page: 1, pot: 0, send: s } },
+    { name: 'Input Level', field: `${sendField}.reverb.inputLevel`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 0, pot: 0, send: s } },
+    { name: 'Predelay 10ms', field: `${sendField}.reverb.predelay10ms`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 29, func: 3, page: 1, pot: 1, send: s } },
+    { name: 'Predelay 1ms', field: `${sendField}.reverb.predelay1ms`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 9, func: 3, page: 1, pot: 2, send: s } },
+    { name: 'Input Premix', field: `${sendField}.reverb.inputPremix`, offset: -99, section: `Send ${s+1} Reverb`, format: fmtSigned(-99),
+      edit: { type: 'number', min: -99, max: 99, func: 3, page: 1, pot: 3, send: s } },
+    { name: 'Input Filter', field: `${sendField}.reverb.inputFilter`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 0, send: s } },
+    { name: 'Decay', field: `${sendField}.reverb.decay`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 1, send: s } },
+    { name: 'Diffusion', field: `${sendField}.reverb.diffusion`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 3, pot: 2, send: s } },
+    { name: 'Density', field: `${sendField}.reverb.density`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 3, pot: 0, send: s } },
+    { name: 'Low Decay', field: `${sendField}.reverb.lowDecay`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 2, send: s } },
+    { name: 'High Decay', field: `${sendField}.reverb.highDecay`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 3, page: 2, pot: 3, send: s } },
+    { name: 'Mix', field: `${sendField}.reverb.mix`, offset: 0, section: `Send ${s+1} Reverb`,
+      edit: { type: 'number', min: 0, max: 99, func: 5, page: 0, pot: 2, send: s } },
+  ];
+}
+
+// Config 4 reverb (full, with input routing including 3-bit input2)
+function fxConfig4ReverbParams() {
+  const params = fxFullReverbParams(0, 'send1');
+  // Config 4 reverb input2 has limit 5 (3 bits) vs 2 in other configs
+  const i2 = params.find(p => p.name === 'Input 2');
+  if (i2) {
+    i2.edit = { type: 'number', min: 0, max: 5, func: 3, page: 0, pot: 1, send: 0 };
+    delete i2.format;
+  }
+  // Config 4 reverb mix is on func 5, page 1, pot 0
+  const mix = params.find(p => p.name === 'Mix');
+  if (mix) mix.edit.page = 1;
+  return params;
+}
+
+// Assemble per-configuration param arrays
+function getEffectParams(config) {
+  switch (config) {
+    case 0: return [
+      ...fxPitchParams6(0, 'send1'),
+      ...fxFullDelayParams(0, 'send1'),
+      ...fxFullReverbParams(0, 'send1'),
+      ...fxPitchParams6(1, 'send2'),
+      ...fxFullDelayParams(1, 'send2'),
+      ...fxPartialReverbParams(1, 'send2'),
+      ...fxPitchParams3(2, 'send3'),
+      ...fxSimpleDelayParams(2, 'send3'),
+      ...fxPartialReverbParams(2, 'send3'),
+      ...fxMinimalDelayParams(3, 'send4'),
+      ...fxMinimalReverbParams(3, 'send4'),
+      ...FX_MOD_PARAMS,
+    ];
+    case 1: return [
+      ...fxConfig1DelayParams(0, 'send1'),
+      ...fxConfig1PitchParams(0, 'send1'),
+      ...fxConfig1FullReverbParams(0, 'send1'),
+      ...fxReverbLevelOnly(1, 'send2'),
+      ...fxConfig1PitchSend3(),
+      ...fxConfig1FullReverbParams(2, 'send3'),
+      ...fxReverbLevelOnly(3, 'send4'),
+      ...FX_MOD_PARAMS,
+    ];
+    case 2: return [
+      ...fxLezlieParams(0, 'send1'),
+      ...fxConfig2DelayParams(0, 'send1'),
+      ...fxFullReverbParams(0, 'send1'),
+      ...fxPitchParams6(1, 'send2'),
+      ...fxFullDelayParams(1, 'send2'),
+      ...fxPartialReverbParams(1, 'send2'),
+      ...fxPitchParams3(2, 'send3'),
+      ...fxSimpleDelayParams(2, 'send3'),
+      ...fxPartialReverbParams(2, 'send3'),
+      ...fxMinimalDelayParams(3, 'send4'),
+      ...fxMinimalReverbParams(3, 'send4'),
+      ...FX_MOD_PARAMS,
+    ];
+    case 3: return [
+      ...fxPitchParams6(0, 'send1'),
+      ...fxFullDelayParams(0, 'send1'),
+      ...fxFullReverbParams(0, 'send1'),
+      ...fxPitchParams6(1, 'send2'),
+      ...fxFullDelayParams(1, 'send2'),
+      ...fxPartialReverbParams(1, 'send2'),
+      ...FX_EQ_PARAMS,
+      ...FX_MOD_PARAMS,
+    ];
+    case 4: return [
+      ...fxPitchParams3(0, 'send1'),
+      ...fxConfig4LezlieParams(),
+      ...fxConfig4DelayParams(),
+      ...fxConfig4ReverbParams(),
+      ...fxConfig4OverdriveParams(),
+      ...FX_EQ_PARAMS,
+      ...FX_MOD_PARAMS_CFG4,
+    ];
+    default: return FX_MOD_PARAMS;
+  }
+}
+
 function fmtSigned(offset) {
   return v => { const s = v + offset; return s > 0 ? `+${s}` : String(s); };
 }
@@ -1258,45 +1748,64 @@ function camelToTitle(s) {
 }
 
 function renderEffect(effect) {
+  // Configuration dropdown
+  const configOpts = EFFECT_CONFIG_LABELS.map((label, i) =>
+    `<option value="${i}"${i === effect.configuration ? ' selected' : ''}>${escapeHTML(label)}</option>`
+  ).join('');
   let html = renderSectionBlock('Configuration',
-    `<tr><td>Type</td><td>${EFFECT_CONFIG_LABELS[effect.configuration] || String(effect.configuration)}</td></tr>`);
+    `<tr><td>Type</td><td><select class="fx-edit fx-config" data-field="configuration">${configOpts}</select></td></tr>`);
 
-  for (let s = 1; s <= 4; s++) {
-    const send = effect[`send${s}`];
-    if (!send) continue;
-    for (const [blockName, block] of Object.entries(send)) {
-      if (typeof block !== 'object' || block === null) continue;
-      let rows = '';
-      for (const [key, val] of Object.entries(block)) {
-        if (val === undefined) continue;
-        rows += `<tr><td>${escapeHTML(camelToTitle(key))}</td><td>${escapeHTML(String(val))}</td></tr>`;
+  // Render params for current configuration
+  const params = getEffectParams(effect.configuration);
+  let currentSection = '';
+  let rows = '';
+  for (const p of params) {
+    if (p.section !== currentSection) {
+      if (currentSection) {
+        html += renderSectionBlock(currentSection, rows);
       }
-      if (rows) {
-        html += renderSectionBlock(`Send ${s} ${camelToTitle(blockName)}`, rows);
-      }
+      currentSection = p.section;
+      rows = '';
     }
+    const raw = getNestedField(effect, p.field);
+    const sendAttr = p.edit && p.edit.send !== undefined ? `data-send="${p.edit.send}"` : '';
+    rows += `<tr><td>${escapeHTML(p.name)}</td><td>${renderFxControl(p, raw !== undefined ? raw : 0, sendAttr)}</td></tr>`;
   }
-
-  if (effect.eq && typeof effect.eq === 'object') {
-    let rows = '';
-    for (const [key, val] of Object.entries(effect.eq)) {
-      if (val === undefined) continue;
-      rows += `<tr><td>${escapeHTML(camelToTitle(key))}</td><td>${escapeHTML(String(val))}</td></tr>`;
-    }
-    if (rows) html += renderSectionBlock('Equalizer', rows);
-  }
-
-  if (effect.mod && typeof effect.mod === 'object') {
-    let rows = '';
-    for (const [key, val] of Object.entries(effect.mod)) {
-      if (val === undefined) continue;
-      const displayVal = key.startsWith('level') ? fmtSigned(-99)(val) : String(val);
-      rows += `<tr><td>${escapeHTML(camelToTitle(key))}</td><td>${escapeHTML(displayVal)}</td></tr>`;
-    }
-    if (rows) html += renderSectionBlock('Modulation', rows);
+  if (currentSection) {
+    html += renderSectionBlock(currentSection, rows);
   }
 
   return html;
+}
+
+function renderFxControl(p, raw, sendAttr) {
+  const e = p.edit;
+  if (!e) {
+    const val = p.format ? p.format(raw) : (p.offset ? String(raw + p.offset) : String(raw));
+    return escapeHTML(String(val));
+  }
+  const attrs = `${sendAttr} data-panel="fx"`;
+  if (e.type === 'number') {
+    const display = raw + (p.offset || 0);
+    return `<input type="number" class="fx-edit" ${attrs} data-field="${p.field}" data-offset="${p.offset || 0}" ` +
+      `data-func="${e.func}" data-page="${e.page}" data-pot="${e.pot}" ` +
+      `min="${e.min}" max="${e.max}" value="${display}">`;
+  }
+  if (e.type === 'checkbox') {
+    return `<input type="checkbox" class="fx-edit" ${attrs} data-field="${p.field}" data-offset="0" ` +
+      `data-func="${e.func}" data-page="${e.page}" data-pot="${e.pot}" ` +
+      `${raw ? 'checked' : ''}>`;
+  }
+  if (e.type === 'select') {
+    let html = `<select class="fx-edit" ${attrs} data-field="${p.field}" data-offset="0" ` +
+      `data-func="${e.func}" data-page="${e.page}" data-pot="${e.pot}">`;
+    for (let i = 0; i < e.options.length; i++) {
+      html += `<option value="${i}"${i === raw ? ' selected' : ''}>${escapeHTML(e.options[i])}</option>`;
+    }
+    html += '</select>';
+    return html;
+  }
+  return escapeHTML(String(raw));
 }
 
 function renderProgInfo(program) {
@@ -1465,6 +1974,54 @@ function renderProgInfo(program) {
   // Delegated change handler for all param controls
   progInfoBody.addEventListener('change', (e) => {
     const el = e.target;
+
+    // --- Effect parameter edits ---
+    if (el.classList.contains('fx-edit')) {
+      if (!activeDevice || !currentEditProgram) return;
+      const out = activeDevice.device.output;
+      const field = el.dataset.field;
+      const offset = Number(el.dataset.offset) || 0;
+
+      // Configuration change — re-render the entire effects panel
+      if (el.classList.contains('fx-config')) {
+        const newConfig = Number(el.value);
+        currentEditProgram.effect.configuration = newConfig;
+        // Send config change: func=2, page=0, pot=0, send is ignored
+        sendParamEdit(out, 3, 2, 0, 0, 0, 0, newConfig);
+        // Re-render effects panel
+        const fxPanel = progInfoBody.querySelector('.prog-info-panel[data-panel="fx"]');
+        if (fxPanel) {
+          const sections = fxPanel.querySelector('.prog-info-sections');
+          if (sections) sections.innerHTML = renderEffect(currentEditProgram.effect);
+        }
+        return;
+      }
+
+      const func = Number(el.dataset.func);
+      const page = Number(el.dataset.page);
+      const pot = Number(el.dataset.pot);
+      const send = el.dataset.send;
+      const sendVal = send === 'x' ? 0 : Number(send);
+
+      let rawVal, displayVal;
+      if (el.type === 'checkbox') {
+        rawVal = el.checked ? 1 : 0;
+      } else {
+        displayVal = Number(el.value);
+        rawVal = displayVal - offset;
+      }
+
+      // Update effect model
+      setNestedField(currentEditProgram.effect, field, rawVal);
+
+      // SysEx: mode=3 (Effects), send maps to ss
+      let midiVal = el.type === 'checkbox' ? rawVal : displayVal;
+      if (midiVal < 0) midiVal += 256;
+      sendParamEdit(out, 3, func, sendVal, page, 0, pot, midiVal & 0xFF);
+      return;
+    }
+
+    // --- Program sound parameter edits ---
     if (!el.classList.contains('prog-edit')) return;
     if (!activeDevice || !currentEditProgram) return;
 
@@ -1774,6 +2331,14 @@ function parseSyxFile(arrayBuffer) {
     }
   }
 
+  // Associate effects with their matching programs (same number)
+  for (const p of programs) {
+    const matchingEffect = effects.find(e => e.num === p.num);
+    if (matchingEffect) {
+      p.program.effect = matchingEffect.effect;
+    }
+  }
+
   return { programs, newMixes, oldMixes, effects, global, messages };
 }
 
@@ -1783,16 +2348,14 @@ function renderSyxViewer(parsed, filename) {
   const counts = [];
   if (parsed.programs.length) counts.push(`${parsed.programs.length} programs`);
   if (mixes.length) counts.push(`${mixes.length} ${mixLabel}`);
-  if (parsed.effects.length) counts.push(`${parsed.effects.length} effects`);
   if (parsed.global) counts.push('1 global');
 
   let html = `<p class="syx-summary"><strong>${escapeHTML(filename)}</strong><br>${counts.join(', ') || 'No recognized data'}</p>`;
 
-  // Build tabs
+  // Build tabs (no separate Effects tab — effects load with their program)
   const tabs = [];
   if (parsed.programs.length) tabs.push({ id: 'programs', label: 'Programs' });
   if (mixes.length) tabs.push({ id: 'mixes', label: 'Mixes' });
-  if (parsed.effects.length) tabs.push({ id: 'effects', label: 'Effects' });
   if (parsed.global) tabs.push({ id: 'global', label: 'Global' });
 
   if (tabs.length > 0) {
@@ -1808,21 +2371,19 @@ function renderSyxViewer(parsed, filename) {
       html += `<div class="prog-info-panel${active}" data-panel="${tabs[t].id}">`;
 
       if (tabs[t].id === 'programs') {
-        html += '<table class="globals-table"><thead><tr><th>#</th><th>Name</th></tr></thead><tbody>';
-        for (const p of parsed.programs) {
-          html += `<tr><td>${String(p.num).padStart(3, '0')}</td><td>${escapeHTML(p.name)}</td></tr>`;
+        html += '<table class="globals-table"><thead><tr><th>#</th><th>Name</th><th></th></tr></thead><tbody>';
+        for (let pi = 0; pi < parsed.programs.length; pi++) {
+          const p = parsed.programs[pi];
+          html += `<tr><td>${String(p.num).padStart(3, '0')}</td><td>${escapeHTML(p.name)}</td>` +
+            `<td><button class="syx-load-btn" data-syx-type="prog" data-syx-idx="${pi}">Load</button></td></tr>`;
         }
         html += '</tbody></table>';
       } else if (tabs[t].id === 'mixes') {
-        html += '<table class="globals-table"><thead><tr><th>#</th><th>Name</th></tr></thead><tbody>';
-        for (const m of mixes) {
-          html += `<tr><td>${String(m.num).padStart(3, '0')}</td><td>${escapeHTML(m.name)}</td></tr>`;
-        }
-        html += '</tbody></table>';
-      } else if (tabs[t].id === 'effects') {
-        html += '<table class="globals-table"><thead><tr><th>#</th><th>Config</th></tr></thead><tbody>';
-        for (const e of parsed.effects) {
-          html += `<tr><td>${String(e.num).padStart(3, '0')}</td><td>${e.configuration}</td></tr>`;
+        html += '<table class="globals-table"><thead><tr><th>#</th><th>Name</th><th></th></tr></thead><tbody>';
+        for (let mi = 0; mi < mixes.length; mi++) {
+          const m = mixes[mi];
+          html += `<tr><td>${String(m.num).padStart(3, '0')}</td><td>${escapeHTML(m.name)}</td>` +
+            `<td><button class="syx-load-btn" data-syx-type="mix" data-syx-idx="${mi}">Load</button></td></tr>`;
         }
         html += '</tbody></table>';
       } else if (tabs[t].id === 'global') {
@@ -1848,6 +2409,48 @@ function renderSyxViewer(parsed, filename) {
       syxViewerBody.querySelector('.prog-info-panel.active')?.classList.remove('active');
       tab.classList.add('active');
       syxViewerBody.querySelector(`.prog-info-panel[data-panel="${tab.dataset.tab}"]`)?.classList.add('active');
+    });
+  });
+
+  // Wire up load buttons
+  syxViewerBody.querySelectorAll('.syx-load-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!activeDevice) return;
+      const type = btn.dataset.syxType;
+      const idx = Number(btn.dataset.syxIdx);
+      const out = activeDevice.device.output;
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        if (type === 'prog') {
+          const p = parsed.programs[idx];
+          // Switch to program mode if needed
+          if (currentMode !== 'prog') {
+            sendModeSelect(out, 0);
+            sendMidiProgramSelect(out, 1);
+            currentMode = 'prog';
+            updateModeSelect();
+          }
+          await writeEditProgram(out, p.program);
+          currentPatchName = p.name;
+          lcdName.textContent = currentPatchName;
+        } else {
+          const m = mixes[idx];
+          if (currentMode !== 'mix') {
+            sendModeSelect(out, 1);
+            sendMidiProgramSelect(out, 2);
+            currentMode = 'mix';
+            updateModeSelect();
+          }
+          await writeEditMix(out, m.mix);
+          currentPatchName = m.name;
+          lcdName.textContent = currentPatchName;
+        }
+        btn.textContent = 'Loaded';
+      } catch {
+        btn.textContent = 'Error';
+      }
+      setTimeout(() => { btn.textContent = 'Load'; btn.disabled = false; }, 1500);
     });
   });
 }
